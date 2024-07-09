@@ -27,6 +27,7 @@ pub struct ReplicaConfig {
     pub listen_host: Ipv6Addr,
     pub http_port: u16,
     pub tcp_port: u16,
+    pub remote_servers: RemoteServers,
     pub keepers: KeeperConfigsForReplica,
 }
 
@@ -38,6 +39,7 @@ impl ReplicaConfig {
             listen_host,
             http_port,
             tcp_port,
+            remote_servers,
             keepers,
         } = self;
         let logger = logger.to_xml();
@@ -45,15 +47,19 @@ impl ReplicaConfig {
         let id = macros.replica;
         let macros = macros.to_xml();
         let keepers = keepers.to_xml();
+        let remote_servers = remote_servers.to_xml();
         format!(
-            "{logger}
-                 <display_name>{cluster}-{id}</display_name>
-                 <listen_host>{listen_host}</listen_host>
-                 <http_port>{http_port}</http_port>
-                 <tcp_port>{tcp_port}</tcp_port>
-             {macros}
-             {keepers}
             "
+<clickhouse>
+{logger}
+    <display_name>{cluster}-{id}</display_name>
+    <listen_host>{listen_host}</listen_host>
+    <http_port>{http_port}</http_port>
+    <tcp_port>{tcp_port}</tcp_port>
+{macros}
+{remote_servers}
+{keepers}
+"
         )
     }
 }
@@ -73,16 +79,17 @@ impl Macros {
         } = self;
         format!(
             "
-            <macros>
-                <shard>{shard}</shard>
-                <replica>{replica}</replica>
-                <cluster>{cluster}</cluster>
-            </macros>
+    <macros>
+        <shard>{shard}</shard>
+        <replica>{replica}</replica>
+        <cluster>{cluster}</cluster>
+    </macros>
         "
         )
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RemoteServers {
     pub cluster: String,
     pub secret: String,
@@ -99,12 +106,13 @@ impl RemoteServers {
 
         let mut s = format!(
             "
-            <remote_servers replace=\"true\">
-                <{cluster}>
-                    <secret>{secret}</secret>
-                    <shard>
-                        <internal_replication>true</internal_replication>
-        "
+    <remote_servers replace=\"true\">
+        <{cluster}>
+            <secret>{secret}</secret>
+            <shard>
+                <internal_replication>true</internal_replication>
+
+"
         );
 
         for r in replicas {
@@ -117,9 +125,9 @@ impl RemoteServers {
 
         s.push_str(&format!(
             "
-                    </shard>
-                </{cluster}>
-            </remote_servers>
+            </shard>
+        </{cluster}>
+    </remote_servers>
         "
         ));
 
@@ -127,6 +135,7 @@ impl RemoteServers {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct KeeperConfigsForReplica {
     pub nodes: Vec<ServerConfig>,
 }
@@ -146,6 +155,7 @@ impl KeeperConfigsForReplica {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
@@ -314,16 +324,72 @@ fn main() {
     };
 }
 
-/// Generate configuration for our clusters
-fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
-    std::fs::create_dir_all(&path).unwrap();
-    let keeper_base_port: u16 = 20000;
-    let raft_base_port: u16 = 21000;
+const KEEPER_BASE_PORT: u16 = 20000;
+const RAFT_BASE_PORT: u16 = 21000;
+const CLICKHOUSE_BASE_TCP_PORT: u16 = 22000;
+const CLICKHOUSE_BASE_HTTP_PORT: u16 = 23000;
+
+fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
+    let cluster = "test-cluster".to_string();
+
+    let servers: Vec<_> = (1..=num_replicas)
+        .map(|id| ServerConfig {
+            host: format!("clickhouse-{id}"),
+            port: CLICKHOUSE_BASE_TCP_PORT + id as u16,
+        })
+        .collect();
+    let remote_servers = RemoteServers {
+        cluster: cluster.clone(),
+        secret: "some-unique-value".to_string(),
+        replicas: servers,
+    };
+
+    let keepers = KeeperConfigsForReplica {
+        nodes: (1..=num_keepers)
+            .map(|id| ServerConfig {
+                host: format!("clickhouse-keeper-{id}"),
+                port: KEEPER_BASE_PORT + id as u16,
+            })
+            .collect(),
+    };
+
+    for i in 1..=num_replicas {
+        let dir: Utf8PathBuf = [path.as_str(), &format!("clickhouse-{i}")].iter().collect();
+        let logs: Utf8PathBuf = dir.clone().join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let log = logs.clone().join("clickhouse.log");
+        let errorlog = logs.clone().join("clickhouse.err.log");
+        let config = ReplicaConfig {
+            logger: LogConfig {
+                level: LogLevel::Debug,
+                log,
+                errorlog,
+                size: "100M".to_string(),
+                count: 1,
+            },
+            macros: Macros {
+                shard: 1,
+                replica: i,
+                cluster: cluster.clone(),
+            },
+            listen_host: "::1".parse().unwrap(),
+            http_port: CLICKHOUSE_BASE_HTTP_PORT + i as u16,
+            tcp_port: CLICKHOUSE_BASE_TCP_PORT + i as u16,
+            remote_servers: remote_servers.clone(),
+            keepers: keepers.clone(),
+        };
+        let mut f = File::create(dir.clone().join("clickhouse-config.xml")).unwrap();
+        f.write_all(config.to_xml().as_bytes()).unwrap();
+        f.flush().unwrap();
+    }
+}
+
+fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
     let raft_servers: Vec<_> = (1..=num_keepers)
         .map(|id| RaftServerConfig {
             id,
             hostname: format!("clickhouse-keeper-{id}"),
-            port: raft_base_port + id as u16,
+            port: RAFT_BASE_PORT + id as u16,
         })
         .collect();
     for i in 1..=num_keepers {
@@ -341,7 +407,7 @@ fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
                 count: 1,
             },
             listen_host: "::1".parse().unwrap(),
-            tcp_port: keeper_base_port + i as u16,
+            tcp_port: KEEPER_BASE_PORT + i as u16,
             server_id: 1,
             log_storage_path: dir.clone().join("coordination").join("log"),
             snapshot_storage_path: dir.clone().join("coordination").join("snapshots"),
@@ -358,4 +424,11 @@ fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
         f.write_all(config.to_xml().as_bytes()).unwrap();
         f.flush().unwrap();
     }
+}
+
+/// Generate configuration for our clusters
+fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
+    std::fs::create_dir_all(&path).unwrap();
+    generate_clickhouse_config(path.clone(), num_keepers, num_replicas);
+    generate_keeper_config(path, num_keepers);
 }
