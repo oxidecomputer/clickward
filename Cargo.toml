@@ -1,0 +1,7 @@
+[package]
+name = "click_ward"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+camino = "1.1.7"
