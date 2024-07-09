@@ -1,5 +1,8 @@
 use camino::Utf8PathBuf;
+use clap::{Parser, Subcommand};
 use std::fmt::Display;
+use std::fs::File;
+use std::io::Write;
 use std::net::Ipv6Addr;
 
 pub enum LogLevel {
@@ -168,14 +171,14 @@ impl LogConfig {
         } = &self;
         format!(
             "
-                <logger>
-                    <level>{level}</level>
-                    <log>{log}</log>
-                    <errorlog>{errorlog}</errorlog>
-                    <size>{size}</size>
-                    <count>{count}</count>
-                 </logger>
-           "
+    <logger>
+        <level>{level}</level>
+        <log>{log}</log>
+        <errorlog>{errorlog}</errorlog>
+        <size>{size}</size>
+        <count>{count}</count>
+    </logger>
+"
         )
     }
 }
@@ -195,20 +198,26 @@ impl RaftServers {
         let mut s = String::new();
         for server in &self.servers {
             let RaftServerConfig { id, hostname, port } = server;
-            s.push_str("        <server>\n");
-            s.push_str(&format!("            <id>{id}</id>\n"));
-            s.push_str(&format!("            <hostname>{hostname}</hostname>\n"));
-            s.push_str(&format!("            <port>{port}</port>\n"));
-            s.push_str("        </server>\n");
+            s.push_str(&format!(
+                "
+            <server>
+                <id>{id}</id>
+                <hostname>{hostname}</hostname>
+                <port>{port}</port>
+            </server>
+            "
+            ));
         }
+
         s
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct RaftServerConfig {
     pub id: u64,
     pub hostname: String,
-    pub port: u64,
+    pub port: u16,
 }
 
 /// Config for an individual Clickhouse Keeper
@@ -244,36 +253,109 @@ impl KeeperConfig {
         let raft_servers = raft_config.to_xml();
         format!(
             "
-            <clickhouse>
-            {logger}
-                <listen_host>{listen_host}</listen_host>
-                <keeper_server>
-                    <tcp_port>{tcp_port}</tcp_port>
-                    <server_id>{server_id}</server_id>
-                    <log_storage_path>{log_storage_path}</log_storage_path>
-                    <snapshot_storage_path>{snapshot_storage_path}</snapshot_storage_path>
-                    <coordination_settings>
-                        <operation_timeout_ms>{operation_timeout_ms}</operation_timeout_ms>
-                        <session_timeout_ms>{session_timeout_ms}</session_timeout_ms>
-                        <raft_logs_level>{raft_logs_level}</raft_logs_level>
-                    </coordination_settings>
-                    <raft_configuration>
-                    {raft_servers}
-                    </raft_configuration>
-                </keeper_server>
-            </clickhouse>
-        "
+<clickhouse>
+{logger}
+    <listen_host>{listen_host}</listen_host>
+    <keeper_server>
+        <tcp_port>{tcp_port}</tcp_port>
+        <server_id>{server_id}</server_id>
+        <log_storage_path>{log_storage_path}</log_storage_path>
+        <snapshot_storage_path>{snapshot_storage_path}</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>{operation_timeout_ms}</operation_timeout_ms>
+            <session_timeout_ms>{session_timeout_ms}</session_timeout_ms>
+            <raft_logs_level>{raft_logs_level}</raft_logs_level>
+        </coordination_settings>
+        <raft_configuration>
+{raft_servers}
+        </raft_configuration>
+    </keeper_server>
+</clickhouse>
+"
         )
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate configuration for our clickhouse and keeper clusters
+    GenConfig {
+        /// Root path of all configuration
+        #[arg(short, long)]
+        path: Utf8PathBuf,
+
+        /// Number of clickhouse keepers
+        #[arg(long)]
+        num_keepers: u64,
+
+        /// Number of clickhouse replicas
+        #[arg(long)]
+        num_replicas: u64,
+    },
+}
+
 fn main() {
-    let log_config = LogConfig {
-        level: LogLevel::Debug,
-        log: "/var/log/clickhouse-server/clickhouse-server.log".into(),
-        errorlog: "/var/log/clickouse-server/clickhouse-server.err.log".into(),
-        size: "100M".to_string(),
-        count: 3,
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::GenConfig {
+            path,
+            num_keepers,
+            num_replicas,
+        } => {
+            generate_config(path, num_keepers, num_replicas);
+        }
     };
-    println!("{}", log_config.to_xml());
+}
+
+/// Generate configuration for our clusters
+fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
+    std::fs::create_dir_all(&path).unwrap();
+    let keeper_base_port: u16 = 20000;
+    let raft_base_port: u16 = 21000;
+    let raft_servers: Vec<_> = (1..=num_keepers)
+        .map(|id| RaftServerConfig {
+            id,
+            hostname: format!("clickhouse-keeper-{id}"),
+            port: raft_base_port + id as u16,
+        })
+        .collect();
+    for i in 1..=num_keepers {
+        let dir: Utf8PathBuf = [path.as_str(), &format!("keeper-{i}")].iter().collect();
+        let logs: Utf8PathBuf = dir.clone().join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let log = logs.clone().join("clickhouse-keeper.log");
+        let errorlog = logs.clone().join("clickhouse-keeper.err.log");
+        let config = KeeperConfig {
+            logger: LogConfig {
+                level: LogLevel::Debug,
+                log,
+                errorlog,
+                size: "100M".to_string(),
+                count: 1,
+            },
+            listen_host: "::1".parse().unwrap(),
+            tcp_port: keeper_base_port + i as u16,
+            server_id: 1,
+            log_storage_path: dir.clone().join("coordination").join("log"),
+            snapshot_storage_path: dir.clone().join("coordination").join("snapshots"),
+            coordination_settings: KeeperCoordinationSettings {
+                operation_timeout_ms: 10000,
+                session_timeout_ms: 30000,
+                raft_logs_level: LogLevel::Trace,
+            },
+            raft_config: RaftServers {
+                servers: raft_servers.clone(),
+            },
+        };
+        let mut f = File::create(dir.clone().join("keeper-config.xml")).unwrap();
+        f.write_all(config.to_xml().as_bytes()).unwrap();
+        f.flush().unwrap();
+    }
 }
