@@ -59,6 +59,8 @@ impl ReplicaConfig {
 {macros}
 {remote_servers}
 {keepers}
+
+</clickhouse>
 "
         )
     }
@@ -83,8 +85,7 @@ impl Macros {
         <shard>{shard}</shard>
         <replica>{replica}</replica>
         <cluster>{cluster}</cluster>
-    </macros>
-        "
+    </macros>"
         )
     }
 }
@@ -110,17 +111,18 @@ impl RemoteServers {
         <{cluster}>
             <secret>{secret}</secret>
             <shard>
-                <internal_replication>true</internal_replication>
-
-"
+                <internal_replication>true</internal_replication>"
         );
 
         for r in replicas {
             let ServerConfig { host, port } = r;
-            s.push_str("                <replica>\n");
-            s.push_str(&format!("                    <host>{host}</host>\n"));
-            s.push_str(&format!("                    <port>{port}</port>\n"));
-            s.push_str("                </replica>\n");
+            s.push_str(&format!(
+                "
+                <replica>
+                    <host>{host}</host>
+                    <port>{port}</port>
+                </replica>"
+            ));
         }
 
         s.push_str(&format!(
@@ -142,15 +144,18 @@ pub struct KeeperConfigsForReplica {
 
 impl KeeperConfigsForReplica {
     pub fn to_xml(&self) -> String {
-        let mut s = String::from("    <zookeeper>\n");
+        let mut s = String::from("    <zookeeper>");
         for node in &self.nodes {
             let ServerConfig { host, port } = node;
-            s.push_str("        <node>\n");
-            s.push_str(&format!("            <host>{host}</host>\n"));
-            s.push_str(&format!("            <port>{port}</port>\n"));
-            s.push_str("        </node>\n");
+            s.push_str(&format!(
+                "
+        <node>
+            <host>{host}</host>
+            <port>{port}</port>
+        </node>",
+            ));
         }
-        s.push_str("    </zookeeper>");
+        s.push_str("\n    </zookeeper>");
         s
     }
 }
@@ -280,6 +285,7 @@ impl KeeperConfig {
 {raft_servers}
         </raft_configuration>
     </keeper_server>
+
 </clickhouse>
 "
         )
