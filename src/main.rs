@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -56,10 +56,14 @@ enum Commands {
     },
 
     /// Remove a keeper node
-    RemoveKeeperNode {
+    RemoveKeeper {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Id of the keeper node to remove
+        #[arg(long)]
+        id: u64,
     },
 }
 
@@ -74,7 +78,7 @@ fn main() {
         Commands::Deploy { path } => deploy(path),
         Commands::Show { path } => show(path),
         Commands::AddKeeper { path } => add_keeper(path),
-        Commands::RemoveKeeperNode { path } => Ok(()),
+        Commands::RemoveKeeper { path, id } => remove_keeper(path, id),
     };
 
     if let Err(e) = res {
@@ -124,6 +128,14 @@ impl ClickwardMetadata {
         self.max_keeper_id
     }
 
+    pub fn remove_keeper(&mut self, id: u64) -> Result<()> {
+        let was_removed = self.keeper_ids.remove(&id);
+        if !was_removed {
+            bail!("No such keeper: {id}");
+        }
+        Ok(())
+    }
+
     pub fn load(deployment_dir: &Utf8Path) -> Result<ClickwardMetadata> {
         let path = deployment_dir.join(CLICKWARD_META_FILENAME);
         let json =
@@ -165,6 +177,23 @@ fn add_keeper(path: Utf8PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Remove a node from clickhouse keeper config at all replicas and stop the
+/// old replica.
+fn remove_keeper(path: Utf8PathBuf, id: u64) -> Result<()> {
+    println!("Updating config to remove keeper: {id}");
+    let path = path.join(DEPLOYMENT_DIR);
+    let mut meta = ClickwardMetadata::load(&path)?;
+    meta.remove_keeper(id)?;
+
+    // The writes from the following two functions aren't transactional
+    // Don't worry about it.
+    meta.save(&path)?;
+    generate_keeper_config(&path, meta.keeper_ids.clone())?;
+    stop_keeper(&path, id)?;
+
+    Ok(())
+}
+
 fn start_keeper(path: &Utf8Path, id: u64) {
     let dir = path.join(format!("keeper-{id}"));
     println!("Deploying keeper: {dir}");
@@ -181,6 +210,24 @@ fn start_keeper(path: &Utf8Path, id: u64) {
         .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start keeper");
+}
+
+fn stop_keeper(path: &Utf8Path, id: u64) -> Result<()> {
+    let dir = path.join(format!("keeper-{id}"));
+    let pidfile = dir.join("keeper.pid");
+    let pid = std::fs::read_to_string(&pidfile)?;
+    let pid = pid.trim_end();
+    println!("Stopping keeper: {dir} at pid {pid}");
+    Command::new("kill")
+        .arg("-9")
+        .arg(pid)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to kill keeper");
+    std::fs::remove_file(&pidfile)?;
+    Ok(())
 }
 
 /// Deploy our clickhouse replicas and keeper cluster
