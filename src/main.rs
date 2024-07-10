@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::fmt::Display;
 use std::fs::File;
 use std::io::Write;
-use std::net::Ipv6Addr;
+use std::process::{Command, Stdio};
 
 pub enum LogLevel {
     Trace,
@@ -24,7 +24,7 @@ impl Display for LogLevel {
 pub struct ReplicaConfig {
     pub logger: LogConfig,
     pub macros: Macros,
-    pub listen_host: Ipv6Addr,
+    pub listen_host: String,
     pub http_port: u16,
     pub tcp_port: u16,
     pub remote_servers: RemoteServers,
@@ -280,7 +280,7 @@ pub struct RaftServerConfig {
 /// Config for an individual Clickhouse Keeper
 pub struct KeeperConfig {
     pub logger: LogConfig,
-    pub listen_host: Ipv6Addr,
+    pub listen_host: String,
     pub tcp_port: u16,
     pub server_id: u64,
     pub log_storage_path: Utf8PathBuf,
@@ -357,6 +357,13 @@ enum Commands {
         #[arg(long)]
         num_replicas: u64,
     },
+
+    /// Launch our deployment given generated configs
+    Deploy {
+        /// Root path of all configuration
+        #[arg(short, long)]
+        path: Utf8PathBuf,
+    },
 }
 
 fn main() {
@@ -369,6 +376,7 @@ fn main() {
         } => {
             generate_config(path, num_keepers, num_replicas);
         }
+        Commands::Deploy { path } => deploy(path),
     };
 }
 
@@ -376,6 +384,78 @@ const KEEPER_BASE_PORT: u16 = 20000;
 const RAFT_BASE_PORT: u16 = 21000;
 const CLICKHOUSE_BASE_TCP_PORT: u16 = 22000;
 const CLICKHOUSE_BASE_HTTP_PORT: u16 = 23000;
+
+/// We put things in a subdirectory of the user path for easy cleanup
+const DEPLOYMENT_DIR: &str = "deployment";
+
+/// Deploy our clickhouse replicas and keeper cluster
+fn deploy(path: Utf8PathBuf) {
+    let path = path.join(DEPLOYMENT_DIR);
+    let dirs: Vec<_> = path.read_dir_utf8().unwrap().collect();
+
+    // Find all keeper replicas them
+    let keeper_dirs = dirs.iter().filter_map(|e| {
+        let entry = e.as_ref().unwrap();
+        if entry.path().file_name().unwrap().starts_with("keeper") {
+            Some(entry.path())
+        } else {
+            None
+        }
+    });
+    // Start all keepers
+    for dir in keeper_dirs {
+        println!("Deploying keeper: {dir}");
+        let config = dir.join("keeper-config.xml");
+        let pidfile = dir.join("keeper.pid");
+        Command::new("clickhouse")
+            .arg("keeper")
+            .arg("-C")
+            .arg(config)
+            .arg("--pidfile")
+            .arg(pidfile)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Failed to start keeper");
+    }
+
+    // Find all clickhouse replicas
+    let clickhouse_dirs = dirs.iter().filter_map(|e| {
+        let entry = e.as_ref().unwrap();
+        if entry.path().file_name().unwrap().starts_with("clickhouse") {
+            Some(entry.path())
+        } else {
+            None
+        }
+    });
+
+    // Start all clickhouse servers
+    for dir in clickhouse_dirs {
+        println!("Deploying clickhouse server: {dir}");
+        let config = dir.join("clickhouse-config.xml");
+        let pidfile = dir.join("clickhouse.pid");
+        Command::new("clickhouse")
+            .arg("server")
+            .arg("-C")
+            .arg(config)
+            .arg("--pidfile")
+            .arg(pidfile)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Failed to start clickhouse server");
+    }
+}
+
+/// Generate configuration for our clusters
+fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
+    let path = path.join(DEPLOYMENT_DIR);
+    std::fs::create_dir_all(&path).unwrap();
+    generate_clickhouse_config(path.clone(), num_keepers, num_replicas);
+    generate_keeper_config(path, num_keepers);
+}
 
 fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
     let cluster = "test-cluster".to_string();
@@ -403,11 +483,11 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
 
     for i in 1..=num_replicas {
         let dir: Utf8PathBuf = [path.as_str(), &format!("clickhouse-{i}")].iter().collect();
-        let logs: Utf8PathBuf = dir.clone().join("logs");
+        let logs: Utf8PathBuf = dir.join("logs");
         std::fs::create_dir_all(&logs).unwrap();
-        let log = logs.clone().join("clickhouse.log");
-        let errorlog = logs.clone().join("clickhouse.err.log");
-        let data_path = dir.clone().join("data");
+        let log = logs.join("clickhouse.log");
+        let errorlog = logs.join("clickhouse.err.log");
+        let data_path = dir.join("data");
         let config = ReplicaConfig {
             logger: LogConfig {
                 level: LogLevel::Trace,
@@ -421,14 +501,14 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
                 replica: i,
                 cluster: cluster.clone(),
             },
-            listen_host: "::1".parse().unwrap(),
+            listen_host: "::1".to_string(),
             http_port: CLICKHOUSE_BASE_HTTP_PORT + i as u16,
             tcp_port: CLICKHOUSE_BASE_TCP_PORT + i as u16,
             remote_servers: remote_servers.clone(),
             keepers: keepers.clone(),
             data_path,
         };
-        let mut f = File::create(dir.clone().join("clickhouse-config.xml")).unwrap();
+        let mut f = File::create(dir.join("clickhouse-config.xml")).unwrap();
         f.write_all(config.to_xml().as_bytes()).unwrap();
         f.flush().unwrap();
     }
@@ -444,10 +524,10 @@ fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
         .collect();
     for i in 1..=num_keepers {
         let dir: Utf8PathBuf = [path.as_str(), &format!("keeper-{i}")].iter().collect();
-        let logs: Utf8PathBuf = dir.clone().join("logs");
+        let logs: Utf8PathBuf = dir.join("logs");
         std::fs::create_dir_all(&logs).unwrap();
-        let log = logs.clone().join("clickhouse-keeper.log");
-        let errorlog = logs.clone().join("clickhouse-keeper.err.log");
+        let log = logs.join("clickhouse-keeper.log");
+        let errorlog = logs.join("clickhouse-keeper.err.log");
         let config = KeeperConfig {
             logger: LogConfig {
                 level: LogLevel::Trace,
@@ -456,11 +536,11 @@ fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
                 size: "100M".to_string(),
                 count: 1,
             },
-            listen_host: "::1".parse().unwrap(),
+            listen_host: "::1".to_string(),
             tcp_port: KEEPER_BASE_PORT + i as u16,
-            server_id: 1,
-            log_storage_path: dir.clone().join("coordination").join("log"),
-            snapshot_storage_path: dir.clone().join("coordination").join("snapshots"),
+            server_id: i,
+            log_storage_path: dir.join("coordination").join("log"),
+            snapshot_storage_path: dir.join("coordination").join("snapshots"),
             coordination_settings: KeeperCoordinationSettings {
                 operation_timeout_ms: 10000,
                 session_timeout_ms: 30000,
@@ -470,15 +550,8 @@ fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
                 servers: raft_servers.clone(),
             },
         };
-        let mut f = File::create(dir.clone().join("keeper-config.xml")).unwrap();
+        let mut f = File::create(dir.join("keeper-config.xml")).unwrap();
         f.write_all(config.to_xml().as_bytes()).unwrap();
         f.flush().unwrap();
     }
-}
-
-/// Generate configuration for our clusters
-fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
-    std::fs::create_dir_all(&path).unwrap();
-    generate_clickhouse_config(path.clone(), num_keepers, num_replicas);
-    generate_keeper_config(path, num_keepers);
 }
