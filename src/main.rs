@@ -27,6 +27,7 @@ pub struct ReplicaConfig {
     pub listen_host: String,
     pub http_port: u16,
     pub tcp_port: u16,
+    pub interserver_http_port: u16,
     pub remote_servers: RemoteServers,
     pub keepers: KeeperConfigsForReplica,
     pub data_path: Utf8PathBuf,
@@ -40,6 +41,7 @@ impl ReplicaConfig {
             listen_host,
             http_port,
             tcp_port,
+            interserver_http_port,
             remote_servers,
             keepers,
             data_path,
@@ -98,6 +100,20 @@ impl ReplicaConfig {
     <listen_host>{listen_host}</listen_host>
     <http_port>{http_port}</http_port>
     <tcp_port>{tcp_port}</tcp_port>
+    <interserver_http_port>{interserver_http_port}</interserver_http_port>
+    <interserver_http_host>::1</interserver_http_host>
+    <distributed_ddl>
+        <!-- Cleanup settings (active tasks will not be removed) -->
+
+        <!-- Controls task TTL (default 1 week) -->
+        <task_max_lifetime>604800</task_max_lifetime>
+
+        <!-- Controls how often cleanup should be performed (in seconds) -->
+        <cleanup_delay_period>60</cleanup_delay_period>
+
+        <!-- Controls how many tasks could be in the queue -->
+        <max_tasks_in_queue>1000</max_tasks_in_queue>
+     </distributed_ddl>
 {macros}
 {remote_servers}
 {keepers}
@@ -384,6 +400,7 @@ const KEEPER_BASE_PORT: u16 = 20000;
 const RAFT_BASE_PORT: u16 = 21000;
 const CLICKHOUSE_BASE_TCP_PORT: u16 = 22000;
 const CLICKHOUSE_BASE_HTTP_PORT: u16 = 23000;
+const CLICKHOUSE_BASE_INTERSERVER_HTTP_PORT: u16 = 24000;
 
 /// We put things in a subdirectory of the user path for easy cleanup
 const DEPLOYMENT_DIR: &str = "deployment";
@@ -458,7 +475,7 @@ fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
 }
 
 fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) {
-    let cluster = "test-cluster".to_string();
+    let cluster = "test_cluster".to_string();
 
     let servers: Vec<_> = (1..=num_replicas)
         .map(|id| ServerConfig {
@@ -475,7 +492,7 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
     let keepers = KeeperConfigsForReplica {
         nodes: (1..=num_keepers)
             .map(|id| ServerConfig {
-                host: format!("clickhouse-keeper-{id}"),
+                host: "[::1]".to_string(),
                 port: KEEPER_BASE_PORT + id as u16,
             })
             .collect(),
@@ -504,6 +521,7 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
             listen_host: "::1".to_string(),
             http_port: CLICKHOUSE_BASE_HTTP_PORT + i as u16,
             tcp_port: CLICKHOUSE_BASE_TCP_PORT + i as u16,
+            interserver_http_port: CLICKHOUSE_BASE_INTERSERVER_HTTP_PORT + i as u16,
             remote_servers: remote_servers.clone(),
             keepers: keepers.clone(),
             data_path,
