@@ -29,6 +29,7 @@ pub struct ReplicaConfig {
     pub tcp_port: u16,
     pub remote_servers: RemoteServers,
     pub keepers: KeeperConfigsForReplica,
+    pub data_path: Utf8PathBuf,
 }
 
 impl ReplicaConfig {
@@ -41,6 +42,7 @@ impl ReplicaConfig {
             tcp_port,
             remote_servers,
             keepers,
+            data_path,
         } = self;
         let logger = logger.to_xml();
         let cluster = macros.cluster.clone();
@@ -48,10 +50,50 @@ impl ReplicaConfig {
         let macros = macros.to_xml();
         let keepers = keepers.to_xml();
         let remote_servers = remote_servers.to_xml();
+        let user_files_path = data_path.clone().join("user_files");
+        //let access_path = data_path.clone().join("access");
+        let format_schema_path = data_path.clone().join("format_schemas");
         format!(
             "
 <clickhouse>
 {logger}
+    <path>{data_path}</path>
+
+    <profiles>
+        <default>
+            <load_balancing>random</load_balancing>
+        </default>
+
+    </profiles>
+
+    <users>
+        <default>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </default>
+    </users>
+
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+
+    <user_files_path>{user_files_path}</user_files_path>
+    <default_profile>default</default_profile>
+    <default_profile>default</default_profile>
+    <format_schema_path>{format_schema_path}</format_schema_path>
     <display_name>{cluster}-{id}</display_name>
     <listen_host>{listen_host}</listen_host>
     <http_port>{http_port}</http_port>
@@ -340,7 +382,7 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
 
     let servers: Vec<_> = (1..=num_replicas)
         .map(|id| ServerConfig {
-            host: format!("clickhouse-{id}"),
+            host: "::1".to_string(),
             port: CLICKHOUSE_BASE_TCP_PORT + id as u16,
         })
         .collect();
@@ -365,9 +407,10 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
         std::fs::create_dir_all(&logs).unwrap();
         let log = logs.clone().join("clickhouse.log");
         let errorlog = logs.clone().join("clickhouse.err.log");
+        let data_path = dir.clone().join("data");
         let config = ReplicaConfig {
             logger: LogConfig {
-                level: LogLevel::Debug,
+                level: LogLevel::Trace,
                 log,
                 errorlog,
                 size: "100M".to_string(),
@@ -383,6 +426,7 @@ fn generate_clickhouse_config(path: Utf8PathBuf, num_keepers: u64, num_replicas:
             tcp_port: CLICKHOUSE_BASE_TCP_PORT + i as u16,
             remote_servers: remote_servers.clone(),
             keepers: keepers.clone(),
+            data_path,
         };
         let mut f = File::create(dir.clone().join("clickhouse-config.xml")).unwrap();
         f.write_all(config.to_xml().as_bytes()).unwrap();
@@ -394,7 +438,7 @@ fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
     let raft_servers: Vec<_> = (1..=num_keepers)
         .map(|id| RaftServerConfig {
             id,
-            hostname: format!("clickhouse-keeper-{id}"),
+            hostname: "::1".to_string(),
             port: RAFT_BASE_PORT + id as u16,
         })
         .collect();
@@ -406,7 +450,7 @@ fn generate_keeper_config(path: Utf8PathBuf, num_keepers: u64) {
         let errorlog = logs.clone().join("clickhouse-keeper.err.log");
         let config = KeeperConfig {
             logger: LogConfig {
-                level: LogLevel::Debug,
+                level: LogLevel::Trace,
                 log,
                 errorlog,
                 size: "100M".to_string(),
