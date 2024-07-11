@@ -64,9 +64,7 @@ Now, let's create a database.
 CREATE DATABASE IF NOT EXISTS db1 ON CLUSTER test_cluster
 ```
 
-Let's also create a replicated table. All replication occurs at the [table
-level](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/
-replication).
+Let's also create a replicated table. All replication occurs at the [table level](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replication).
 
 ```sql
 CREATE TABLE db1.table1 ON CLUSTER test_cluster (
@@ -114,8 +112,7 @@ You can experiment all you want with these static clusters.
 
 `clickward` allows growing and shrinking your keeper cluster. The commands
 are self explanatory. More detail can be found about how this works in the
-[clickhouse-keeper documentation](https://clickhouse.com/docs/en/guides/sre/
-keeper/clickhouse-keeper).
+[clickhouse-keeper documentation](https://clickhouse.com/docs/en/guides/sre/keeper/clickhouse-keeper).
 
 `clickward` also allows adding and removing clickhouse servers. These servers
 are standalone, but replicated tables will be replicated there as long as
@@ -124,8 +121,7 @@ configuration files at all nodes get updated, clickhouse doesn't automatically
 replicate everything to this new server. This actually has the benefit of
 allowing you to manually limit replicas to certain subsets of your nodes. Manual
 sharding in effect. We'll go over adding a new replica now. First though, let's
-go through the first part of using [system tables](https://clickhouse.com/blog/
-clickhouse-debugging-issues-with-system-tables).
+go through the first part of using [system tables](https://clickhouse.com/blog/clickhouse-debugging-issues-with-system-tables).
 
 Let's look at our current cluster from an existing clickhouse server. We need to login again first.
 
