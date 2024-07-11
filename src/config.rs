@@ -331,6 +331,7 @@ impl KeeperConfig {
     }
 }
 
+#[allow(unused)]
 pub enum LogLevel {
     Trace,
     Debug,

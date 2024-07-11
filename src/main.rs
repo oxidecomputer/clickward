@@ -121,13 +121,25 @@ pub struct ClickwardMetadata {
     /// The maximum allocated keeper_id so far
     /// We only ever increment when adding a new id.
     pub max_keeper_id: u64,
+
+    /// IDs of clickhouse servers that are replicas of each other
+    /// We never reuse IDs.
+    pub replica_ids: BTreeSet<u64>,
+
+    /// The maximum allocated replica id so far
+    /// We only ever increment when adding a new id.
+    pub max_replica_id: u64,
 }
 
 impl ClickwardMetadata {
-    pub fn new(keeper_ids: BTreeSet<u64>) -> ClickwardMetadata {
+    pub fn new(keeper_ids: BTreeSet<u64>, replica_ids: BTreeSet<u64>) -> ClickwardMetadata {
+        let max_keeper_id = *keeper_ids.last().unwrap();
+        let max_replica_id = *replica_ids.last().unwrap();
         ClickwardMetadata {
             keeper_ids,
-            max_keeper_id: 3,
+            max_keeper_id,
+            replica_ids,
+            max_replica_id,
         }
     }
 
@@ -194,6 +206,9 @@ fn add_keeper(path: Utf8PathBuf) -> Result<()> {
         generate_keeper_config(&path, id, meta.keeper_ids.clone())?;
     }
 
+    // Update clickhouse configs so they know about the new keeper node
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+
     Ok(())
 }
 
@@ -212,6 +227,9 @@ fn remove_keeper(path: Utf8PathBuf, id: u64) -> Result<()> {
         generate_keeper_config(&path, *id, meta.keeper_ids.clone())?;
     }
     stop_keeper(&path, id)?;
+
+    // Update clickhouse configs so they know about the removed keeper node
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
 
     Ok(())
 }
@@ -344,24 +362,31 @@ fn deploy(path: Utf8PathBuf) -> Result<()> {
 fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) -> Result<()> {
     let path = path.join(DEPLOYMENT_DIR);
     std::fs::create_dir_all(&path).unwrap();
-    generate_clickhouse_config(&path, num_keepers, num_replicas)?;
 
     let keeper_ids: BTreeSet<u64> = (1..=num_keepers).collect();
+    let replica_ids: BTreeSet<u64> = (1..=num_replicas).collect();
+
+    generate_clickhouse_config(&path, keeper_ids.clone(), replica_ids.clone())?;
     for id in &keeper_ids {
         generate_keeper_config(&path, *id, keeper_ids.clone())?;
     }
 
-    let meta = ClickwardMetadata::new(keeper_ids);
+    let meta = ClickwardMetadata::new(keeper_ids, replica_ids);
     meta.save(&path)?;
 
     Ok(())
 }
 
-fn generate_clickhouse_config(path: &Utf8Path, num_keepers: u64, num_replicas: u64) -> Result<()> {
+fn generate_clickhouse_config(
+    path: &Utf8Path,
+    keeper_ids: BTreeSet<u64>,
+    replica_ids: BTreeSet<u64>,
+) -> Result<()> {
     let cluster = "test_cluster".to_string();
 
-    let servers: Vec<_> = (1..=num_replicas)
-        .map(|id| ServerConfig {
+    let servers: Vec<_> = replica_ids
+        .iter()
+        .map(|&id| ServerConfig {
             host: "::1".to_string(),
             port: CLICKHOUSE_BASE_TCP_PORT + id as u16,
         })
@@ -373,16 +398,19 @@ fn generate_clickhouse_config(path: &Utf8Path, num_keepers: u64, num_replicas: u
     };
 
     let keepers = KeeperConfigsForReplica {
-        nodes: (1..=num_keepers)
-            .map(|id| ServerConfig {
+        nodes: keeper_ids
+            .iter()
+            .map(|&id| ServerConfig {
                 host: "[::1]".to_string(),
                 port: KEEPER_BASE_PORT + id as u16,
             })
             .collect(),
     };
 
-    for i in 1..=num_replicas {
-        let dir: Utf8PathBuf = [path.as_str(), &format!("clickhouse-{i}")].iter().collect();
+    for id in replica_ids {
+        let dir: Utf8PathBuf = [path.as_str(), &format!("clickhouse-{id}")]
+            .iter()
+            .collect();
         let logs: Utf8PathBuf = dir.join("logs");
         std::fs::create_dir_all(&logs)?;
         let log = logs.join("clickhouse.log");
@@ -398,13 +426,13 @@ fn generate_clickhouse_config(path: &Utf8Path, num_keepers: u64, num_replicas: u
             },
             macros: Macros {
                 shard: 1,
-                replica: i,
+                replica: id,
                 cluster: cluster.clone(),
             },
             listen_host: "::1".to_string(),
-            http_port: CLICKHOUSE_BASE_HTTP_PORT + i as u16,
-            tcp_port: CLICKHOUSE_BASE_TCP_PORT + i as u16,
-            interserver_http_port: CLICKHOUSE_BASE_INTERSERVER_HTTP_PORT + i as u16,
+            http_port: CLICKHOUSE_BASE_HTTP_PORT + id as u16,
+            tcp_port: CLICKHOUSE_BASE_TCP_PORT + id as u16,
+            interserver_http_port: CLICKHOUSE_BASE_INTERSERVER_HTTP_PORT + id as u16,
             remote_servers: remote_servers.clone(),
             keepers: keepers.clone(),
             data_path,
