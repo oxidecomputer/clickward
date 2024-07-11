@@ -170,9 +170,20 @@ fn add_keeper(path: Utf8PathBuf) -> Result<()> {
 
     // The writes from the following two functions aren't transactional
     // Don't worry about it.
+    //
+    // We update the new node and start it before the other nodes. It must be online
+    // for reconfiguration to succeed.
     meta.save(&path)?;
-    generate_keeper_config(&path, meta.keeper_ids.clone())?;
+    generate_keeper_config(&path, new_id, meta.keeper_ids.clone())?;
     start_keeper(&path, new_id);
+
+    // Generate new configs for all the other keepers
+    // They will automatically reload them.
+    let mut other_keepers = meta.keeper_ids.clone();
+    other_keepers.remove(&new_id);
+    for id in other_keepers {
+        generate_keeper_config(&path, id, meta.keeper_ids.clone())?;
+    }
 
     Ok(())
 }
@@ -185,10 +196,12 @@ fn remove_keeper(path: Utf8PathBuf, id: u64) -> Result<()> {
     let mut meta = ClickwardMetadata::load(&path)?;
     meta.remove_keeper(id)?;
 
-    // The writes from the following two functions aren't transactional
+    // The writes from the following functions aren't transactional
     // Don't worry about it.
     meta.save(&path)?;
-    generate_keeper_config(&path, meta.keeper_ids.clone())?;
+    for id in &meta.keeper_ids {
+        generate_keeper_config(&path, *id, meta.keeper_ids.clone())?;
+    }
     stop_keeper(&path, id)?;
 
     Ok(())
@@ -299,7 +312,9 @@ fn generate_config(path: Utf8PathBuf, num_keepers: u64, num_replicas: u64) -> Re
     generate_clickhouse_config(&path, num_keepers, num_replicas)?;
 
     let keeper_ids: BTreeSet<u64> = (1..=num_keepers).collect();
-    generate_keeper_config(&path, keeper_ids.clone())?;
+    for id in &keeper_ids {
+        generate_keeper_config(&path, *id, keeper_ids.clone())?;
+    }
 
     let meta = ClickwardMetadata::new(keeper_ids);
     meta.save(&path)?;
@@ -366,7 +381,12 @@ fn generate_clickhouse_config(path: &Utf8Path, num_keepers: u64, num_replicas: u
     Ok(())
 }
 
-fn generate_keeper_config(path: &Utf8Path, keeper_ids: BTreeSet<u64>) -> Result<()> {
+/// Generate a config for `this_keeper` consisting of the replicas in `keeper_ids`
+fn generate_keeper_config(
+    path: &Utf8Path,
+    this_keeper: u64,
+    keeper_ids: BTreeSet<u64>,
+) -> Result<()> {
     let raft_servers: Vec<_> = keeper_ids
         .iter()
         .map(|id| RaftServerConfig {
@@ -375,37 +395,38 @@ fn generate_keeper_config(path: &Utf8Path, keeper_ids: BTreeSet<u64>) -> Result<
             port: RAFT_BASE_PORT + *id as u16,
         })
         .collect();
-    for id in keeper_ids.iter() {
-        let dir: Utf8PathBuf = [path.as_str(), &format!("keeper-{id}")].iter().collect();
-        let logs: Utf8PathBuf = dir.join("logs");
-        std::fs::create_dir_all(&logs)?;
-        let log = logs.join("clickhouse-keeper.log");
-        let errorlog = logs.join("clickhouse-keeper.err.log");
-        let config = KeeperConfig {
-            logger: LogConfig {
-                level: LogLevel::Trace,
-                log,
-                errorlog,
-                size: "100M".to_string(),
-                count: 1,
-            },
-            listen_host: "::1".to_string(),
-            tcp_port: KEEPER_BASE_PORT + *id as u16,
-            server_id: *id,
-            log_storage_path: dir.join("coordination").join("log"),
-            snapshot_storage_path: dir.join("coordination").join("snapshots"),
-            coordination_settings: KeeperCoordinationSettings {
-                operation_timeout_ms: 10000,
-                session_timeout_ms: 30000,
-                raft_logs_level: LogLevel::Trace,
-            },
-            raft_config: RaftServers {
-                servers: raft_servers.clone(),
-            },
-        };
-        let mut f = File::create(dir.join("keeper-config.xml"))?;
-        f.write_all(config.to_xml().as_bytes())?;
-        f.flush()?;
-    }
+    let dir: Utf8PathBuf = [path.as_str(), &format!("keeper-{this_keeper}")]
+        .iter()
+        .collect();
+    let logs: Utf8PathBuf = dir.join("logs");
+    std::fs::create_dir_all(&logs)?;
+    let log = logs.join("clickhouse-keeper.log");
+    let errorlog = logs.join("clickhouse-keeper.err.log");
+    let config = KeeperConfig {
+        logger: LogConfig {
+            level: LogLevel::Trace,
+            log,
+            errorlog,
+            size: "100M".to_string(),
+            count: 1,
+        },
+        listen_host: "::1".to_string(),
+        tcp_port: KEEPER_BASE_PORT + this_keeper as u16,
+        server_id: this_keeper,
+        log_storage_path: dir.join("coordination").join("log"),
+        snapshot_storage_path: dir.join("coordination").join("snapshots"),
+        coordination_settings: KeeperCoordinationSettings {
+            operation_timeout_ms: 10000,
+            session_timeout_ms: 30000,
+            raft_logs_level: LogLevel::Trace,
+        },
+        raft_config: RaftServers {
+            servers: raft_servers.clone(),
+        },
+    };
+    let mut f = File::create(dir.join("keeper-config.xml"))?;
+    f.write_all(config.to_xml().as_bytes())?;
+    f.flush()?;
+
     Ok(())
 }
