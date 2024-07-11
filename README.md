@@ -146,6 +146,10 @@ We need to now login to this server and create the database and table locally.
 It will actually check keeper and see that the replicas exist and the data will
 be there.
 
+```
+clickhouse client --port 22003
+```
+
 
 ```sql
 CREATE DATABASE IF NOT EXISTS db1 ON CLUSTER test_cluster
