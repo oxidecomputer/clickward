@@ -74,11 +74,22 @@ enum Commands {
         id: u64,
     },
 
-    /// Add a clickhouse server replica
-    AddReplica {
+    /// Add a clickhouse server
+    AddServer {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+    },
+
+    /// Remove a clickhouse server
+    RemoveServer {
+        /// Root path of all configuration
+        #[arg(short, long)]
+        path: Utf8PathBuf,
+
+        /// Id of the clickhouse server node to remove
+        #[arg(long)]
+        id: u64,
     },
 }
 
@@ -95,7 +106,8 @@ fn main() {
         Commands::AddKeeper { path } => add_keeper(path),
         Commands::RemoveKeeper { path, id } => remove_keeper(path, id),
         Commands::KeeperConfig { id } => keeper_config(id),
-        Commands::AddReplica { path } => add_replica(path),
+        Commands::AddServer { path } => add_server(path),
+        Commands::RemoveServer { path, id } => remove_server(path, id),
     };
 
     if let Err(e) = res {
@@ -130,13 +142,13 @@ pub struct ClickwardMetadata {
     /// We only ever increment when adding a new id.
     pub max_keeper_id: u64,
 
-    /// IDs of clickhouse servers that are replicas of each other
+    /// IDs of clickhouse servers
     /// We never reuse IDs.
-    pub replica_ids: BTreeSet<u64>,
+    pub server_ids: BTreeSet<u64>,
 
-    /// The maximum allocated replica id so far
+    /// The maximum allocated clickhouse server id so far
     /// We only ever increment when adding a new id.
-    pub max_replica_id: u64,
+    pub max_server_id: u64,
 }
 
 impl ClickwardMetadata {
@@ -146,8 +158,8 @@ impl ClickwardMetadata {
         ClickwardMetadata {
             keeper_ids,
             max_keeper_id,
-            replica_ids,
-            max_replica_id,
+            server_ids: replica_ids,
+            max_server_id: max_replica_id,
         }
     }
 
@@ -165,10 +177,18 @@ impl ClickwardMetadata {
         Ok(())
     }
 
-    pub fn add_replica(&mut self) -> u64 {
-        self.max_replica_id += 1;
-        self.replica_ids.insert(self.max_replica_id);
-        self.max_replica_id
+    pub fn add_server(&mut self) -> u64 {
+        self.max_server_id += 1;
+        self.server_ids.insert(self.max_server_id);
+        self.max_server_id
+    }
+
+    pub fn remove_server(&mut self, id: u64) -> Result<()> {
+        let was_removed = self.server_ids.remove(&id);
+        if !was_removed {
+            bail!("No such replica: {id}");
+        }
+        Ok(())
     }
 
     pub fn load(deployment_dir: &Utf8Path) -> Result<ClickwardMetadata> {
@@ -221,16 +241,16 @@ fn add_keeper(path: Utf8PathBuf) -> Result<()> {
     }
 
     // Update clickhouse configs so they know about the new keeper node
-    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.server_ids.clone())?;
 
     Ok(())
 }
 
 /// Add a new clickhouse server replica
-fn add_replica(path: Utf8PathBuf) -> Result<()> {
+fn add_server(path: Utf8PathBuf) -> Result<()> {
     let path = path.join(DEPLOYMENT_DIR);
     let mut meta = ClickwardMetadata::load(&path)?;
-    let new_id = meta.add_replica();
+    let new_id = meta.add_server();
 
     println!("Updating config to include new replica: {new_id}");
 
@@ -239,10 +259,10 @@ fn add_replica(path: Utf8PathBuf) -> Result<()> {
     meta.save(&path)?;
 
     // Update clickhouse configs so they know about the new replica
-    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.server_ids.clone())?;
 
     // Start the new replica
-    start_replica(&path, new_id);
+    start_server(&path, new_id);
 
     Ok(())
 }
@@ -264,7 +284,34 @@ fn remove_keeper(path: Utf8PathBuf, id: u64) -> Result<()> {
     stop_keeper(&path, id)?;
 
     // Update clickhouse configs so they know about the removed keeper node
-    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.server_ids.clone())?;
+
+    Ok(())
+}
+
+/// Remove a node from clickhouse server config at all replicas and stop the
+/// old server.
+fn remove_server(path: Utf8PathBuf, id: u64) -> Result<()> {
+    println!("Updating config to remove clickhouse server: {id}");
+    let path = path.join(DEPLOYMENT_DIR);
+    let mut meta = ClickwardMetadata::load(&path)?;
+    meta.remove_server(id)?;
+
+    // The writes from the following functions aren't transactional
+    // Don't worry about it.
+    meta.save(&path)?;
+
+    // Update clickhouse configs so they know about the removed keeper node
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.server_ids.clone())?;
+
+    // Stop the clickhouse server
+    stop_server(id)?;
+
+    // TODO: Remove?
+    // Remove the replica from the systme table via contacting a still running server
+    //if let Some(id_to_talk_to) = meta.server_ids.first() {
+    //remove_clickhouse_replica_via_client(*id_to_talk_to, id)?;
+    //}
 
     Ok(())
 }
@@ -295,6 +342,36 @@ fn keeper_config(id: u64) -> Result<()> {
     Ok(())
 }
 
+//TODO: Delete? - We can't actually drop a replica until it is detected as inactive,
+// which requires polling. Maybe a touch much for `clickward` right now.
+//
+/// Remove a replica from clickhouse via the `clickouse-client`
+/*fn remove_clickhouse_replica_via_client(id_to_talk_to: u64, id_to_remove: u64) -> Result<()> {
+    let port = CLICKHOUSE_BASE_TCP_PORT + id_to_talk_to as u16;
+    let mut child = Command::new("clickhouse")
+        .arg("client")
+        .arg("--port")
+        .arg(port.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to connect to clickhouse server at port {port}"))?;
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdin
+        .write_all(format!("system drop replica '{id_to_remove}';\nexit\n").as_bytes())
+        .context("failed to send command to clickhouse")?;
+
+    //    let mut output = String::new();
+    //  stdout.read_to_string(&mut output)?;
+    // println!("{output}");
+
+    Ok(())
+}
+*/
+
 fn start_keeper(path: &Utf8Path, id: u64) {
     let dir = path.join(format!("keeper-{id}"));
     println!("Deploying keeper: {dir}");
@@ -313,17 +390,14 @@ fn start_keeper(path: &Utf8Path, id: u64) {
         .expect("Failed to start keeper");
 }
 
-fn start_replica(path: &Utf8Path, id: u64) {
+fn start_server(path: &Utf8Path, id: u64) {
     let dir = path.join(format!("clickhouse-{id}"));
     println!("Deploying clickhouse server: {dir}");
     let config = dir.join("clickhouse-config.xml");
-    let pidfile = dir.join("clickhouse.pid");
     Command::new("clickhouse")
         .arg("server")
         .arg("-C")
         .arg(config)
-        .arg("--pidfile")
-        .arg(pidfile)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -346,6 +420,20 @@ fn stop_keeper(path: &Utf8Path, id: u64) -> Result<()> {
         .spawn()
         .expect("Failed to kill keeper");
     std::fs::remove_file(&pidfile)?;
+    Ok(())
+}
+
+fn stop_server(id: u64) -> Result<()> {
+    let name = format!("clickhouse-{id}");
+    println!("Stopping clickhouse server: {name}");
+    Command::new("pkill")
+        .arg("-f")
+        .arg(name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to kill clickhouse server");
     Ok(())
 }
 
