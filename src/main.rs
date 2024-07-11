@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
+use std::io::Read;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -65,6 +66,13 @@ enum Commands {
         #[arg(long)]
         id: u64,
     },
+
+    /// Get the keeper config from a given keeper
+    KeeperConfig {
+        /// Id of the keeper node to remove
+        #[arg(long)]
+        id: u64,
+    },
 }
 
 fn main() {
@@ -79,6 +87,7 @@ fn main() {
         Commands::Show { path } => show(path),
         Commands::AddKeeper { path } => add_keeper(path),
         Commands::RemoveKeeper { path, id } => remove_keeper(path, id),
+        Commands::KeeperConfig { id } => keeper_config(id),
     };
 
     if let Err(e) = res {
@@ -203,6 +212,32 @@ fn remove_keeper(path: Utf8PathBuf, id: u64) -> Result<()> {
         generate_keeper_config(&path, *id, meta.keeper_ids.clone())?;
     }
     stop_keeper(&path, id)?;
+
+    Ok(())
+}
+
+/// Get the keeper config from a running keeper
+fn keeper_config(id: u64) -> Result<()> {
+    let port = KEEPER_BASE_PORT + id as u16;
+    let mut child = Command::new("clickhouse")
+        .arg("keeper-client")
+        .arg("--port")
+        .arg(port.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to connect to keeper client at port {port}"))?;
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdin
+        .write_all(b"get /keeper/config\nexit\n")
+        .context("failed to send 'get' to keeper")?;
+
+    let mut output = String::new();
+    stdout.read_to_string(&mut output)?;
+    println!("{output}");
 
     Ok(())
 }
