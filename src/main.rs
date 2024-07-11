@@ -73,6 +73,13 @@ enum Commands {
         #[arg(long)]
         id: u64,
     },
+
+    /// Add a clickhouse server replica
+    AddReplica {
+        /// Root path of all configuration
+        #[arg(short, long)]
+        path: Utf8PathBuf,
+    },
 }
 
 fn main() {
@@ -88,6 +95,7 @@ fn main() {
         Commands::AddKeeper { path } => add_keeper(path),
         Commands::RemoveKeeper { path, id } => remove_keeper(path, id),
         Commands::KeeperConfig { id } => keeper_config(id),
+        Commands::AddReplica { path } => add_replica(path),
     };
 
     if let Err(e) = res {
@@ -157,6 +165,12 @@ impl ClickwardMetadata {
         Ok(())
     }
 
+    pub fn add_replica(&mut self) -> u64 {
+        self.max_replica_id += 1;
+        self.replica_ids.insert(self.max_replica_id);
+        self.max_replica_id
+    }
+
     pub fn load(deployment_dir: &Utf8Path) -> Result<ClickwardMetadata> {
         let path = deployment_dir.join(CLICKWARD_META_FILENAME);
         let json =
@@ -208,6 +222,27 @@ fn add_keeper(path: Utf8PathBuf) -> Result<()> {
 
     // Update clickhouse configs so they know about the new keeper node
     generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+
+    Ok(())
+}
+
+/// Add a new clickhouse server replica
+fn add_replica(path: Utf8PathBuf) -> Result<()> {
+    let path = path.join(DEPLOYMENT_DIR);
+    let mut meta = ClickwardMetadata::load(&path)?;
+    let new_id = meta.add_replica();
+
+    println!("Updating config to include new replica: {new_id}");
+
+    // The writes from the following two functions aren't transactional
+    // Don't worry about it.
+    meta.save(&path)?;
+
+    // Update clickhouse configs so they know about the new replica
+    generate_clickhouse_config(&path, meta.keeper_ids.clone(), meta.replica_ids.clone())?;
+
+    // Start the new replica
+    start_replica(&path, new_id);
 
     Ok(())
 }
@@ -276,6 +311,24 @@ fn start_keeper(path: &Utf8Path, id: u64) {
         .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start keeper");
+}
+
+fn start_replica(path: &Utf8Path, id: u64) {
+    let dir = path.join(format!("clickhouse-{id}"));
+    println!("Deploying clickhouse server: {dir}");
+    let config = dir.join("clickhouse-config.xml");
+    let pidfile = dir.join("clickhouse.pid");
+    Command::new("clickhouse")
+        .arg("server")
+        .arg("-C")
+        .arg(config)
+        .arg("--pidfile")
+        .arg(pidfile)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to start clickhouse server");
 }
 
 fn stop_keeper(path: &Utf8Path, id: u64) -> Result<()> {
