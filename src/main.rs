@@ -307,12 +307,6 @@ fn remove_server(path: Utf8PathBuf, id: u64) -> Result<()> {
     // Stop the clickhouse server
     stop_server(id)?;
 
-    // TODO: Remove?
-    // Remove the replica from the systme table via contacting a still running server
-    //if let Some(id_to_talk_to) = meta.server_ids.first() {
-    //remove_clickhouse_replica_via_client(*id_to_talk_to, id)?;
-    //}
-
     Ok(())
 }
 
@@ -341,36 +335,6 @@ fn keeper_config(id: u64) -> Result<()> {
 
     Ok(())
 }
-
-//TODO: Delete? - We can't actually drop a replica until it is detected as inactive,
-// which requires polling. Maybe a touch much for `clickward` right now.
-//
-/// Remove a replica from clickhouse via the `clickouse-client`
-/*fn remove_clickhouse_replica_via_client(id_to_talk_to: u64, id_to_remove: u64) -> Result<()> {
-    let port = CLICKHOUSE_BASE_TCP_PORT + id_to_talk_to as u16;
-    let mut child = Command::new("clickhouse")
-        .arg("client")
-        .arg("--port")
-        .arg(port.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .with_context(|| format!("failed to connect to clickhouse server at port {port}"))?;
-
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = child.stdout.take().unwrap();
-    stdin
-        .write_all(format!("system drop replica '{id_to_remove}';\nexit\n").as_bytes())
-        .context("failed to send command to clickhouse")?;
-
-    //    let mut output = String::new();
-    //  stdout.read_to_string(&mut output)?;
-    // println!("{output}");
-
-    Ok(())
-}
-*/
 
 fn start_keeper(path: &Utf8Path, id: u64) {
     let dir = path.join(format!("keeper-{id}"));
