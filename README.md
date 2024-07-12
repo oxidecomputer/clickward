@@ -290,3 +290,12 @@ FROM trips
 GROUP BY pickup_date, pickup_ntaname
 ORDER BY pickup_date ASC
 ```
+
+# Hard Reset
+
+If you wan to start over, just delete your deployment configurations and kill the processes.
+
+```
+rm -rf <deployment_dir>
+pkill clickhouse
+```
