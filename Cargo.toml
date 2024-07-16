@@ -1,5 +1,5 @@
 [package]
-name = "click_ward"
+name = "clickward"
 version = "0.1.0"
 edition = "2021"
 

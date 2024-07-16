@@ -261,6 +261,10 @@ INSERT INTO db1.trips FROM INFILE 'trips_1.gz' COMPRESSION 'gzip' FORMAT TabSepa
 
 These queries should work on either node 1 or 2.
 
+```
+use db1
+```
+
 ```sql
 SELECT count() FROM trips
 ```
