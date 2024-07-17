@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::net::SocketAddr;
 use std::process::{Command, Stdio};
 
 pub mod config;
@@ -33,14 +34,19 @@ pub const DEFAULT_BASE_PORTS: BasePorts = BasePorts {
 pub struct DeploymentConfig {
     pub path: Utf8PathBuf,
     pub base_ports: BasePorts,
+    pub cluster_name: String,
 }
 
 impl DeploymentConfig {
-    pub fn new_with_default_ports(path: Utf8PathBuf) -> DeploymentConfig {
+    pub fn new_with_default_ports<S: Into<String>>(
+        path: Utf8PathBuf,
+        cluster_name: S,
+    ) -> DeploymentConfig {
         let path = path.join(DEPLOYMENT_DIR);
         DeploymentConfig {
             path,
             base_ports: DEFAULT_BASE_PORTS,
+            cluster_name: cluster_name.into(),
         }
     }
 }
@@ -140,14 +146,44 @@ pub struct Deployment {
 }
 
 impl Deployment {
-    pub fn new_with_default_port_config(path: Utf8PathBuf) -> Deployment {
-        let config = DeploymentConfig::new_with_default_ports(path);
+    pub fn new_with_default_port_config<S: Into<String>>(
+        path: Utf8PathBuf,
+        cluster_name: S,
+    ) -> Deployment {
+        let config = DeploymentConfig::new_with_default_ports(path, cluster_name);
         Deployment { config }
     }
 
     pub fn show(&self) -> Result<()> {
         let meta = ClickwardMetadata::load(&self.config.path)?;
         println!("{:#?}", meta);
+        Ok(())
+    }
+
+    /// Return the expected clickhouse http port for a given server id
+    pub fn http_port(&self, id: u64) -> u16 {
+        self.config.base_ports.clickhouse_http + id as u16
+    }
+
+    /// Return the expected localhost http addr for a given server id
+    pub fn http_addr(&self, id: u64) -> Result<SocketAddr> {
+        let port = self.http_port(id);
+        let addr: SocketAddr = format!("[::1]:{port}")
+            .parse()
+            .context("failed to create address")?;
+        Ok(addr)
+    }
+
+    /// Stop all clickhouse servers and keepers
+    pub fn teardown(&self) -> Result<()> {
+        let meta = ClickwardMetadata::load(&self.config.path)?;
+        for id in meta.keeper_ids {
+            // TODO: Logging?
+            self.stop_keeper(id)?;
+        }
+        for id in meta.server_ids {
+            self.stop_server(id)?;
+        }
         Ok(())
     }
 
@@ -167,7 +203,7 @@ impl Deployment {
         // for reconfiguration to succeed.
         meta.save(path)?;
         self.generate_keeper_config(new_id, meta.keeper_ids.clone())?;
-        self.start_keeper(new_id);
+        self.start_keeper(new_id)?;
 
         // Generate new configs for all the other keepers
         // They will automatically reload them.
@@ -198,7 +234,7 @@ impl Deployment {
         self.generate_clickhouse_config(meta.keeper_ids.clone(), meta.server_ids.clone())?;
 
         // Start the new replica
-        self.start_server(new_id);
+        self.start_server(new_id)?;
 
         Ok(())
     }
@@ -270,7 +306,7 @@ impl Deployment {
         Ok(())
     }
 
-    pub fn start_keeper(&self, id: u64) {
+    pub fn start_keeper(&self, id: u64) -> Result<()> {
         let dir = self.config.path.join(format!("keeper-{id}"));
         println!("Deploying keeper: {dir}");
         let config = dir.join("keeper-config.xml");
@@ -285,22 +321,27 @@ impl Deployment {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("Failed to start keeper");
+            .context("Failed to start keeper")?;
+        Ok(())
     }
 
-    pub fn start_server(&self, id: u64) {
+    pub fn start_server(&self, id: u64) -> Result<()> {
         let dir = self.config.path.join(format!("clickhouse-{id}"));
         println!("Deploying clickhouse server: {dir}");
         let config = dir.join("clickhouse-config.xml");
+        let pidfile = dir.join("clickhouse.pid");
         Command::new("clickhouse")
             .arg("server")
             .arg("-C")
             .arg(config)
+            .arg("--pidfile")
+            .arg(pidfile)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("Failed to start clickhouse server");
+            .context("Failed to start clickhouse server")?;
+        Ok(())
     }
 
     pub fn stop_keeper(&self, id: u64) -> Result<()> {
@@ -316,22 +357,51 @@ impl Deployment {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("Failed to kill keeper");
+            .context("Failed to kill keeper")?;
         std::fs::remove_file(&pidfile)?;
         Ok(())
     }
 
     pub fn stop_server(&self, id: u64) -> Result<()> {
         let name = format!("clickhouse-{id}");
-        println!("Stopping clickhouse server: {name}");
-        Command::new("pkill")
-            .arg("-f")
-            .arg(name)
+        let dir = self.config.path.join(&name);
+        let pidfile = dir.join("clickhouse.pid");
+        let pid = std::fs::read_to_string(&pidfile)?;
+        let pid = pid.trim_end();
+
+        // Retrieve the child process id
+        let output = Command::new("pgrep")
+            .arg("-P")
+            .arg(pid)
+            .output()
+            .context("failed to retreive child process for pid {pid}")?;
+        let child_pid =
+            String::from_utf8(output.stdout).context("failed to parse child pid for pid {pid}")?;
+        let child_pid = child_pid.trim_end();
+
+        println!("Stopping clickhouse server {name}: pid - {pid}, child pid - {child_pid}");
+
+        // Kill the parent
+        Command::new("kill")
+            .arg("-9")
+            .arg(pid)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("Failed to kill clickhouse server");
+            .context("Failed to kill clickhouse server")?;
+
+        // Kill the child
+        Command::new("kill")
+            .arg("-9")
+            .arg(child_pid)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Failed to kill clickhouse server")?;
+        std::fs::remove_file(&pidfile)?;
+
         Ok(())
     }
 
@@ -363,7 +433,7 @@ impl Deployment {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .expect("Failed to start keeper");
+                .context("Failed to start keeper")?;
         }
 
         // Find all clickhouse replicas
@@ -391,8 +461,9 @@ impl Deployment {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .expect("Failed to start clickhouse server");
+                .context("Failed to start clickhouse server")?;
         }
+
         Ok(())
     }
 
@@ -418,7 +489,7 @@ impl Deployment {
         keeper_ids: BTreeSet<u64>,
         replica_ids: BTreeSet<u64>,
     ) -> Result<()> {
-        let cluster = "test_cluster".to_string();
+        let cluster = self.config.cluster_name.clone();
 
         let servers: Vec<_> = replica_ids
             .iter()

@@ -38,6 +38,13 @@ enum Commands {
         path: Utf8PathBuf,
     },
 
+    /// Stop all our deployed processes
+    Teardown {
+        /// Root path of all configuration
+        #[arg(short, long)]
+        path: Utf8PathBuf,
+    },
+
     /// Show metadata about the deployment
     Show {
         /// Root path of all configuration
@@ -89,6 +96,8 @@ enum Commands {
     },
 }
 
+const CLUSTER: &str = "test_cluster";
+
 fn main() {
     let cli = Cli::parse();
     let res = match cli.command {
@@ -97,37 +106,41 @@ fn main() {
             num_keepers,
             num_replicas,
         } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.generate_config(num_keepers, num_replicas)
         }
         Commands::Deploy { path } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.deploy()
         }
+        Commands::Teardown { path } => {
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            d.teardown()
+        }
         Commands::Show { path } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.show()
         }
         Commands::AddKeeper { path } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.add_keeper()
         }
         Commands::RemoveKeeper { path, id } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.remove_keeper(id)
         }
         Commands::KeeperConfig { id } => {
             // Unused
             let dummy_path = ".".into();
-            let d = Deployment::new_with_default_port_config(dummy_path);
+            let d = Deployment::new_with_default_port_config(dummy_path, CLUSTER);
             d.keeper_config(id)
         }
         Commands::AddServer { path } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.add_server()
         }
         Commands::RemoveServer { path, id } => {
-            let d = Deployment::new_with_default_port_config(path);
+            let d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.remove_server(id)
         }
     };
