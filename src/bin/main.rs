@@ -5,7 +5,7 @@
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 
-use clickward::Deployment;
+use clickward::{Deployment, KeeperClient};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -98,15 +98,22 @@ enum Commands {
 
 const CLUSTER: &str = "test_cluster";
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    if let Err(e) = handle().await {
+        println!("Error: {e}");
+    }
+}
+
+async fn handle() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let res = match cli.command {
+    match cli.command {
         Commands::GenConfig {
             path,
             num_keepers,
             num_replicas,
         } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.generate_config(num_keepers, num_replicas)
         }
         Commands::Deploy { path } => {
@@ -119,33 +126,37 @@ fn main() {
         }
         Commands::Show { path } => {
             let d = Deployment::new_with_default_port_config(path, CLUSTER);
-            d.show()
+            match &d.meta() {
+                Some(meta) => println!("{:#?}", meta),
+                None => println!("No deployment generated: Please call `gen-config`"),
+            }
+            Ok(())
         }
         Commands::AddKeeper { path } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.add_keeper()
         }
         Commands::RemoveKeeper { path, id } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.remove_keeper(id)
         }
         Commands::KeeperConfig { id } => {
             // Unused
             let dummy_path = ".".into();
             let d = Deployment::new_with_default_port_config(dummy_path, CLUSTER);
-            d.keeper_config(id)
+            let addr = d.keeper_addr(id)?;
+            let zk = KeeperClient::new(addr);
+            let output = zk.config().await?;
+            println!("{output}");
+            Ok(())
         }
         Commands::AddServer { path } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.add_server()
         }
         Commands::RemoveServer { path, id } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.remove_server(id)
         }
-    };
-
-    if let Err(e) = res {
-        println!("Error: {e}");
     }
 }

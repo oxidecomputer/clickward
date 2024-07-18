@@ -7,7 +7,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::Read;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::process::{Command, Stdio};
@@ -15,12 +14,17 @@ use std::process::{Command, Stdio};
 pub mod config;
 use config::*;
 
+mod keeper;
+pub use keeper::KeeperClient;
+
 /// We put things in a subdirectory of the user path for easy cleanup
 pub const DEPLOYMENT_DIR: &str = "deployment";
 
 /// The name of the file where `ClickwardMetadata` lives. This is *always*
 /// directly below <path>/deployment.
 pub const CLICKWARD_META_FILENAME: &str = "clickward-metadata.json";
+
+const MISSING_META: &str = "No deployment found: Is your path correct?";
 
 pub const DEFAULT_BASE_PORTS: BasePorts = BasePorts {
     keeper: 20000,
@@ -59,6 +63,7 @@ pub struct BasePorts {
     pub clickhouse_http: u16,
     pub clickhouse_interserver_http: u16,
 }
+
 /// Metadata stored for use by clickward
 ///
 /// This prevents the need to parse XML and only includes what we need to
@@ -143,6 +148,7 @@ impl ClickwardMetadata {
 /// This always generates clusters on localhost and is suitable only for testing
 pub struct Deployment {
     config: DeploymentConfig,
+    meta: Option<ClickwardMetadata>,
 }
 
 impl Deployment {
@@ -151,13 +157,12 @@ impl Deployment {
         cluster_name: S,
     ) -> Deployment {
         let config = DeploymentConfig::new_with_default_ports(path, cluster_name);
-        Deployment { config }
+        let meta = ClickwardMetadata::load(&config.path).ok();
+        Deployment { config, meta }
     }
 
-    pub fn show(&self) -> Result<()> {
-        let meta = ClickwardMetadata::load(&self.config.path)?;
-        println!("{:#?}", meta);
-        Ok(())
+    pub fn meta(&self) -> &Option<ClickwardMetadata> {
+        &self.meta
     }
 
     /// Return the expected clickhouse http port for a given server id
@@ -174,34 +179,47 @@ impl Deployment {
         Ok(addr)
     }
 
+    pub fn keeper_port(&self, id: u64) -> u16 {
+        self.config.base_ports.keeper + id as u16
+    }
+
+    pub fn keeper_addr(&self, id: u64) -> Result<SocketAddr> {
+        let port = self.keeper_port(id);
+        let addr: SocketAddr = format!("[::1]:{port}")
+            .parse()
+            .context("failed to create address")?;
+        Ok(addr)
+    }
+
     /// Stop all clickhouse servers and keepers
     pub fn teardown(&self) -> Result<()> {
-        let meta = ClickwardMetadata::load(&self.config.path)?;
-        for id in meta.keeper_ids {
-            // TODO: Logging?
-            self.stop_keeper(id)?;
-        }
-        for id in meta.server_ids {
-            self.stop_server(id)?;
+        if let Some(meta) = &self.meta {
+            for id in &meta.keeper_ids {
+                // TODO: Logging?
+                self.stop_keeper(*id)?;
+            }
+            for id in &meta.server_ids {
+                self.stop_server(*id)?;
+            }
         }
         Ok(())
     }
 
     /// Add a node to clickhouse keeper config at all replicas and start the new
     /// keeper
-    pub fn add_keeper(&self) -> Result<()> {
+    pub fn add_keeper(&mut self) -> Result<()> {
         let path = &self.config.path;
-        let mut meta = ClickwardMetadata::load(path)?;
-        let new_id = meta.add_keeper();
+        let (new_id, meta) = if let Some(meta) = &mut self.meta {
+            let new_id = meta.add_keeper();
+            println!("Updating config to include new keeper: {new_id}");
+            meta.save(path)?;
+            (new_id, meta.clone())
+        } else {
+            bail!(MISSING_META);
+        };
 
-        println!("Updating config to include new keeper: {new_id}");
-
-        // The writes from the following two functions aren't transactional
-        // Don't worry about it.
-        //
         // We update the new node and start it before the other nodes. It must be online
         // for reconfiguration to succeed.
-        meta.save(path)?;
         self.generate_keeper_config(new_id, meta.keeper_ids.clone())?;
         self.start_keeper(new_id)?;
 
@@ -220,18 +238,18 @@ impl Deployment {
     }
 
     /// Add a new clickhouse server replica
-    pub fn add_server(&self) -> Result<()> {
-        let mut meta = ClickwardMetadata::load(&self.config.path)?;
-        let new_id = meta.add_server();
-
-        println!("Updating config to include new replica: {new_id}");
-
-        // The writes from the following two functions aren't transactional
-        // Don't worry about it.
-        meta.save(&self.config.path)?;
+    pub fn add_server(&mut self) -> Result<()> {
+        let (new_id, meta) = if let Some(meta) = &mut self.meta {
+            let new_id = meta.add_server();
+            println!("Updating config to include new replica: {new_id}");
+            meta.save(&self.config.path)?;
+            (new_id, meta.clone())
+        } else {
+            bail!(MISSING_META);
+        };
 
         // Update clickhouse configs so they know about the new replica
-        self.generate_clickhouse_config(meta.keeper_ids.clone(), meta.server_ids.clone())?;
+        self.generate_clickhouse_config(meta.keeper_ids, meta.server_ids)?;
 
         // Start the new replica
         self.start_server(new_id)?;
@@ -241,14 +259,16 @@ impl Deployment {
 
     /// Remove a node from clickhouse keeper config at all replicas and stop the
     /// old replica.
-    pub fn remove_keeper(&self, id: u64) -> Result<()> {
+    pub fn remove_keeper(&mut self, id: u64) -> Result<()> {
         println!("Updating config to remove keeper: {id}");
-        let mut meta = ClickwardMetadata::load(&self.config.path)?;
-        meta.remove_keeper(id)?;
+        let meta = if let Some(meta) = &mut self.meta {
+            meta.remove_keeper(id)?;
+            meta.save(&self.config.path)?;
+            meta.clone()
+        } else {
+            bail!(MISSING_META);
+        };
 
-        // The writes from the following functions aren't transactional
-        // Don't worry about it.
-        meta.save(&self.config.path)?;
         for id in &meta.keeper_ids {
             self.generate_keeper_config(*id, meta.keeper_ids.clone())?;
         }
@@ -262,46 +282,21 @@ impl Deployment {
 
     /// Remove a node from clickhouse server config at all replicas and stop the
     /// old server.
-    pub fn remove_server(&self, id: u64) -> Result<()> {
+    pub fn remove_server(&mut self, id: u64) -> Result<()> {
         println!("Updating config to remove clickhouse server: {id}");
-        let mut meta = ClickwardMetadata::load(&self.config.path)?;
-        meta.remove_server(id)?;
-
-        // The writes from the following functions aren't transactional
-        // Don't worry about it.
-        meta.save(&self.config.path)?;
+        let meta = if let Some(meta) = &mut self.meta {
+            meta.remove_server(id)?;
+            meta.save(&self.config.path)?;
+            meta.clone()
+        } else {
+            bail!(MISSING_META);
+        };
 
         // Update clickhouse configs so they know about the removed keeper node
-        self.generate_clickhouse_config(meta.keeper_ids.clone(), meta.server_ids.clone())?;
+        self.generate_clickhouse_config(meta.keeper_ids, meta.server_ids)?;
 
         // Stop the clickhouse server
         self.stop_server(id)?;
-
-        Ok(())
-    }
-
-    /// Get the keeper config from a running keeper
-    pub fn keeper_config(&self, id: u64) -> Result<()> {
-        let port = self.config.base_ports.keeper + id as u16;
-        let mut child = Command::new("clickhouse")
-            .arg("keeper-client")
-            .arg("--port")
-            .arg(port.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("failed to connect to keeper client at port {port}"))?;
-
-        let mut stdin = child.stdin.take().unwrap();
-        let mut stdout = child.stdout.take().unwrap();
-        stdin
-            .write_all(b"get /keeper/config\nexit\n")
-            .context("failed to send 'get' to keeper")?;
-
-        let mut output = String::new();
-        stdout.read_to_string(&mut output)?;
-        println!("{output}");
 
         Ok(())
     }
@@ -468,7 +463,7 @@ impl Deployment {
     }
 
     /// Generate configuration for our clusters
-    pub fn generate_config(&self, num_keepers: u64, num_replicas: u64) -> Result<()> {
+    pub fn generate_config(&mut self, num_keepers: u64, num_replicas: u64) -> Result<()> {
         std::fs::create_dir_all(&self.config.path).unwrap();
 
         let keeper_ids: BTreeSet<u64> = (1..=num_keepers).collect();
@@ -481,6 +476,7 @@ impl Deployment {
 
         let meta = ClickwardMetadata::new(keeper_ids, replica_ids);
         meta.save(&self.config.path)?;
+        self.meta = Some(meta);
 
         Ok(())
     }
