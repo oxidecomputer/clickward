@@ -15,7 +15,7 @@ pub mod config;
 use config::*;
 
 mod keeper;
-pub use keeper::KeeperClient;
+pub use keeper::{KeeperClient, KeeperError};
 
 /// We put things in a subdirectory of the user path for easy cleanup
 pub const DEPLOYMENT_DIR: &str = "deployment";

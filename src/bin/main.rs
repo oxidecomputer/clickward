@@ -147,7 +147,7 @@ async fn handle() -> anyhow::Result<()> {
             let addr = d.keeper_addr(id)?;
             let zk = KeeperClient::new(addr);
             let output = zk.config().await?;
-            println!("{output}");
+            println!("{output:#?}");
             Ok(())
         }
         Commands::AddServer { path } => {
