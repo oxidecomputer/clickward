@@ -194,12 +194,15 @@ impl Deployment {
     /// Stop all clickhouse servers and keepers
     pub fn teardown(&self) -> Result<()> {
         if let Some(meta) = &self.meta {
+            // We don't keep track of which nodes we already stopped, and so we
+            // allow stopping to fail.
             for id in &meta.keeper_ids {
                 // TODO: Logging?
-                self.stop_keeper(*id)?;
+                let _ = self.stop_keeper(*id);
             }
             for id in &meta.server_ids {
-                self.stop_server(*id)?;
+                // TODO: Logging?
+                let _ = self.stop_server(*id);
             }
         }
         Ok(())

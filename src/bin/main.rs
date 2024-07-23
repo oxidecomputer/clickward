@@ -96,7 +96,8 @@ enum Commands {
     },
 }
 
-const CLUSTER: &str = "test_cluster";
+//const CLUSTER: &str = "test_cluster";
+const CLUSTER: &str = "oximeter_cluster";
 
 #[tokio::main]
 async fn main() {
