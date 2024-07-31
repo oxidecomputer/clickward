@@ -144,7 +144,7 @@ async fn handle() -> anyhow::Result<()> {
             let dummy_path = ".".into();
             let d =
                 Deployment::new_with_default_port_config(dummy_path, CLUSTER);
-            let addr = d.keeper_addr(id)?;
+            let addr = d.keeper_addr(id.into())?;
             let zk = KeeperClient::new(addr);
             let output = zk.config().await?;
             println!("{output:#?}");
