@@ -43,7 +43,7 @@ const MISSING_META: &str = "No deployment found: Is your path correct?";
     Serialize,
     Deserialize,
 )]
-pub struct KeeperId(u64);
+pub struct KeeperId(pub u64);
 
 /// A unique ID for a clickhouse server
 #[derive(
@@ -61,7 +61,7 @@ pub struct KeeperId(u64);
     Serialize,
     Deserialize,
 )]
-pub struct ServerId(u64);
+pub struct ServerId(pub u64);
 
 pub const DEFAULT_BASE_PORTS: BasePorts = BasePorts {
     keeper: 20000,
