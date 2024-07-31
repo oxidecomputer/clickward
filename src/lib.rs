@@ -208,12 +208,12 @@ impl Deployment {
     }
 
     /// Return the expected clickhouse http port for a given server id
-    pub fn http_port(&self, id: u64) -> u16 {
-        self.config.base_ports.clickhouse_http + id as u16
+    pub fn http_port(&self, id: ServerId) -> u16 {
+        self.config.base_ports.clickhouse_http + id.0 as u16
     }
 
     /// Return the expected localhost http addr for a given server id
-    pub fn http_addr(&self, id: u64) -> Result<SocketAddr> {
+    pub fn http_addr(&self, id: ServerId) -> Result<SocketAddr> {
         let port = self.http_port(id);
         let addr: SocketAddr = format!("[::1]:{port}")
             .parse()
@@ -221,11 +221,11 @@ impl Deployment {
         Ok(addr)
     }
 
-    pub fn keeper_port(&self, id: u64) -> u16 {
-        self.config.base_ports.keeper + id as u16
+    pub fn keeper_port(&self, id: KeeperId) -> u16 {
+        self.config.base_ports.keeper + id.0 as u16
     }
 
-    pub fn keeper_addr(&self, id: u64) -> Result<SocketAddr> {
+    pub fn keeper_addr(&self, id: KeeperId) -> Result<SocketAddr> {
         let port = self.keeper_port(id);
         let addr: SocketAddr = format!("[::1]:{port}")
             .parse()
