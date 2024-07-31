@@ -199,6 +199,10 @@ impl Deployment {
     ) -> Deployment {
         let config =
             DeploymentConfig::new_with_default_ports(path, cluster_name);
+        Deployment::new(config)
+    }
+
+    pub fn new(config: DeploymentConfig) -> Deployment {
         let meta = ClickwardMetadata::load(&config.path).ok();
         Deployment { config, meta }
     }
