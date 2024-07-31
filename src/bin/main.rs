@@ -109,11 +109,7 @@ async fn main() {
 async fn handle() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::GenConfig {
-            path,
-            num_keepers,
-            num_replicas,
-        } => {
+        Commands::GenConfig { path, num_keepers, num_replicas } => {
             let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
             d.generate_config(num_keepers, num_replicas)
         }
@@ -129,7 +125,9 @@ async fn handle() -> anyhow::Result<()> {
             let d = Deployment::new_with_default_port_config(path, CLUSTER);
             match &d.meta() {
                 Some(meta) => println!("{:#?}", meta),
-                None => println!("No deployment generated: Please call `gen-config`"),
+                None => println!(
+                    "No deployment generated: Please call `gen-config`"
+                ),
             }
             Ok(())
         }
@@ -139,12 +137,13 @@ async fn handle() -> anyhow::Result<()> {
         }
         Commands::RemoveKeeper { path, id } => {
             let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
-            d.remove_keeper(id)
+            d.remove_keeper(id.into())
         }
         Commands::KeeperConfig { id } => {
             // Unused
             let dummy_path = ".".into();
-            let d = Deployment::new_with_default_port_config(dummy_path, CLUSTER);
+            let d =
+                Deployment::new_with_default_port_config(dummy_path, CLUSTER);
             let addr = d.keeper_addr(id)?;
             let zk = KeeperClient::new(addr);
             let output = zk.config().await?;
@@ -157,7 +156,7 @@ async fn handle() -> anyhow::Result<()> {
         }
         Commands::RemoveServer { path, id } => {
             let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
-            d.remove_server(id)
+            d.remove_server(id.into())
         }
     }
 }

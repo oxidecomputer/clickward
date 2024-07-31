@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use crate::{KeeperId, ServerId};
 use camino::Utf8PathBuf;
 use std::fmt::Display;
 
@@ -110,17 +111,13 @@ impl ReplicaConfig {
 
 pub struct Macros {
     pub shard: u64,
-    pub replica: u64,
+    pub replica: ServerId,
     pub cluster: String,
 }
 
 impl Macros {
     pub fn to_xml(&self) -> String {
-        let Macros {
-            shard,
-            replica,
-            cluster,
-        } = self;
+        let Macros { shard, replica, cluster } = self;
         format!(
             "
     <macros>
@@ -141,11 +138,7 @@ pub struct RemoteServers {
 
 impl RemoteServers {
     pub fn to_xml(&self) -> String {
-        let RemoteServers {
-            cluster,
-            secret,
-            replicas,
-        } = self;
+        let RemoteServers { cluster, secret, replicas } = self;
 
         let mut s = format!(
             "
@@ -219,13 +212,7 @@ pub struct LogConfig {
 
 impl LogConfig {
     pub fn to_xml(&self) -> String {
-        let LogConfig {
-            level,
-            log,
-            errorlog,
-            size,
-            count,
-        } = &self;
+        let LogConfig { level, log, errorlog, size, count } = &self;
         format!(
             "
     <logger>
@@ -272,7 +259,7 @@ impl RaftServers {
 
 #[derive(Debug, Clone)]
 pub struct RaftServerConfig {
-    pub id: u64,
+    pub id: KeeperId,
     pub hostname: String,
     pub port: u16,
 }
@@ -282,7 +269,7 @@ pub struct KeeperConfig {
     pub logger: LogConfig,
     pub listen_host: String,
     pub tcp_port: u16,
-    pub server_id: u64,
+    pub server_id: KeeperId,
     pub log_storage_path: Utf8PathBuf,
     pub snapshot_storage_path: Utf8PathBuf,
     pub coordination_settings: KeeperCoordinationSettings,

@@ -4,6 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use derive_more::{Add, AddAssign, Display, From};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -25,6 +26,42 @@ pub const DEPLOYMENT_DIR: &str = "deployment";
 pub const CLICKWARD_META_FILENAME: &str = "clickward-metadata.json";
 
 const MISSING_META: &str = "No deployment found: Is your path correct?";
+
+/// A unique ID for a clickhouse keeper
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    From,
+    Add,
+    AddAssign,
+    Display,
+    Serialize,
+    Deserialize,
+)]
+pub struct KeeperId(u64);
+
+/// A unique ID for a clickhouse server
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    From,
+    Add,
+    AddAssign,
+    Display,
+    Serialize,
+    Deserialize,
+)]
+pub struct ServerId(u64);
 
 pub const DEFAULT_BASE_PORTS: BasePorts = BasePorts {
     keeper: 20000,
@@ -72,23 +109,26 @@ pub struct BasePorts {
 pub struct ClickwardMetadata {
     /// IDs of keepers that are currently part of the cluster
     /// We never reuse IDs.
-    pub keeper_ids: BTreeSet<u64>,
+    pub keeper_ids: BTreeSet<KeeperId>,
 
     /// The maximum allocated keeper_id so far
     /// We only ever increment when adding a new id.
-    pub max_keeper_id: u64,
+    pub max_keeper_id: KeeperId,
 
     /// IDs of clickhouse servers
     /// We never reuse IDs.
-    pub server_ids: BTreeSet<u64>,
+    pub server_ids: BTreeSet<ServerId>,
 
     /// The maximum allocated clickhouse server id so far
     /// We only ever increment when adding a new id.
-    pub max_server_id: u64,
+    pub max_server_id: ServerId,
 }
 
 impl ClickwardMetadata {
-    pub fn new(keeper_ids: BTreeSet<u64>, replica_ids: BTreeSet<u64>) -> ClickwardMetadata {
+    pub fn new(
+        keeper_ids: BTreeSet<KeeperId>,
+        replica_ids: BTreeSet<ServerId>,
+    ) -> ClickwardMetadata {
         let max_keeper_id = *keeper_ids.last().unwrap();
         let max_replica_id = *replica_ids.last().unwrap();
         ClickwardMetadata {
@@ -99,13 +139,13 @@ impl ClickwardMetadata {
         }
     }
 
-    pub fn add_keeper(&mut self) -> u64 {
-        self.max_keeper_id += 1;
+    pub fn add_keeper(&mut self) -> KeeperId {
+        self.max_keeper_id += 1.into();
         self.keeper_ids.insert(self.max_keeper_id);
         self.max_keeper_id
     }
 
-    pub fn remove_keeper(&mut self, id: u64) -> Result<()> {
+    pub fn remove_keeper(&mut self, id: KeeperId) -> Result<()> {
         let was_removed = self.keeper_ids.remove(&id);
         if !was_removed {
             bail!("No such keeper: {id}");
@@ -113,13 +153,13 @@ impl ClickwardMetadata {
         Ok(())
     }
 
-    pub fn add_server(&mut self) -> u64 {
-        self.max_server_id += 1;
+    pub fn add_server(&mut self) -> ServerId {
+        self.max_server_id += 1.into();
         self.server_ids.insert(self.max_server_id);
         self.max_server_id
     }
 
-    pub fn remove_server(&mut self, id: u64) -> Result<()> {
+    pub fn remove_server(&mut self, id: ServerId) -> Result<()> {
         let was_removed = self.server_ids.remove(&id);
         if !was_removed {
             bail!("No such replica: {id}");
@@ -129,8 +169,8 @@ impl ClickwardMetadata {
 
     pub fn load(deployment_dir: &Utf8Path) -> Result<ClickwardMetadata> {
         let path = deployment_dir.join(CLICKWARD_META_FILENAME);
-        let json =
-            std::fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+        let json = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {path}"))?;
         let meta = serde_json::from_str(&json)?;
         Ok(meta)
     }
@@ -138,7 +178,8 @@ impl ClickwardMetadata {
     pub fn save(&self, deployment_dir: &Utf8Path) -> Result<()> {
         let path = deployment_dir.join(CLICKWARD_META_FILENAME);
         let json = serde_json::to_string(self)?;
-        std::fs::write(&path, &json).with_context(|| format!("Failed to write {path}"))?;
+        std::fs::write(&path, &json)
+            .with_context(|| format!("Failed to write {path}"))?;
         Ok(())
     }
 }
@@ -156,7 +197,8 @@ impl Deployment {
         path: Utf8PathBuf,
         cluster_name: S,
     ) -> Deployment {
-        let config = DeploymentConfig::new_with_default_ports(path, cluster_name);
+        let config =
+            DeploymentConfig::new_with_default_ports(path, cluster_name);
         let meta = ClickwardMetadata::load(&config.path).ok();
         Deployment { config, meta }
     }
@@ -235,7 +277,10 @@ impl Deployment {
         }
 
         // Update clickhouse configs so they know about the new keeper node
-        self.generate_clickhouse_config(meta.keeper_ids.clone(), meta.server_ids.clone())?;
+        self.generate_clickhouse_config(
+            meta.keeper_ids.clone(),
+            meta.server_ids.clone(),
+        )?;
 
         Ok(())
     }
@@ -262,7 +307,7 @@ impl Deployment {
 
     /// Remove a node from clickhouse keeper config at all replicas and stop the
     /// old replica.
-    pub fn remove_keeper(&mut self, id: u64) -> Result<()> {
+    pub fn remove_keeper(&mut self, id: KeeperId) -> Result<()> {
         println!("Updating config to remove keeper: {id}");
         let meta = if let Some(meta) = &mut self.meta {
             meta.remove_keeper(id)?;
@@ -278,14 +323,17 @@ impl Deployment {
         self.stop_keeper(id)?;
 
         // Update clickhouse configs so they know about the removed keeper node
-        self.generate_clickhouse_config(meta.keeper_ids.clone(), meta.server_ids.clone())?;
+        self.generate_clickhouse_config(
+            meta.keeper_ids.clone(),
+            meta.server_ids.clone(),
+        )?;
 
         Ok(())
     }
 
     /// Remove a node from clickhouse server config at all replicas and stop the
     /// old server.
-    pub fn remove_server(&mut self, id: u64) -> Result<()> {
+    pub fn remove_server(&mut self, id: ServerId) -> Result<()> {
         println!("Updating config to remove clickhouse server: {id}");
         let meta = if let Some(meta) = &mut self.meta {
             meta.remove_server(id)?;
@@ -304,7 +352,7 @@ impl Deployment {
         Ok(())
     }
 
-    pub fn start_keeper(&self, id: u64) -> Result<()> {
+    pub fn start_keeper(&self, id: KeeperId) -> Result<()> {
         let dir = self.config.path.join(format!("keeper-{id}"));
         println!("Deploying keeper: {dir}");
         let config = dir.join("keeper-config.xml");
@@ -323,7 +371,7 @@ impl Deployment {
         Ok(())
     }
 
-    pub fn start_server(&self, id: u64) -> Result<()> {
+    pub fn start_server(&self, id: ServerId) -> Result<()> {
         let dir = self.config.path.join(format!("clickhouse-{id}"));
         println!("Deploying clickhouse server: {dir}");
         let config = dir.join("clickhouse-config.xml");
@@ -342,7 +390,7 @@ impl Deployment {
         Ok(())
     }
 
-    pub fn stop_keeper(&self, id: u64) -> Result<()> {
+    pub fn stop_keeper(&self, id: KeeperId) -> Result<()> {
         let dir = self.config.path.join(format!("keeper-{id}"));
         let pidfile = dir.join("keeper.pid");
         let pid = std::fs::read_to_string(&pidfile)?;
@@ -360,7 +408,7 @@ impl Deployment {
         Ok(())
     }
 
-    pub fn stop_server(&self, id: u64) -> Result<()> {
+    pub fn stop_server(&self, id: ServerId) -> Result<()> {
         let name = format!("clickhouse-{id}");
         let dir = self.config.path.join(&name);
         let pidfile = dir.join("clickhouse.pid");
@@ -373,8 +421,8 @@ impl Deployment {
             .arg(pid)
             .output()
             .context("failed to retreive child process for pid {pid}")?;
-        let child_pid =
-            String::from_utf8(output.stdout).context("failed to parse child pid for pid {pid}")?;
+        let child_pid = String::from_utf8(output.stdout)
+            .context("failed to parse child pid for pid {pid}")?;
         let child_pid = child_pid.trim_end();
 
         println!("Stopping clickhouse server {name}: pid - {pid}, child pid - {child_pid}");
@@ -466,13 +514,22 @@ impl Deployment {
     }
 
     /// Generate configuration for our clusters
-    pub fn generate_config(&mut self, num_keepers: u64, num_replicas: u64) -> Result<()> {
+    pub fn generate_config(
+        &mut self,
+        num_keepers: u64,
+        num_replicas: u64,
+    ) -> Result<()> {
         std::fs::create_dir_all(&self.config.path).unwrap();
 
-        let keeper_ids: BTreeSet<u64> = (1..=num_keepers).collect();
-        let replica_ids: BTreeSet<u64> = (1..=num_replicas).collect();
+        let keeper_ids: BTreeSet<KeeperId> =
+            (1..=num_keepers).map(KeeperId).collect();
+        let replica_ids: BTreeSet<ServerId> =
+            (1..=num_replicas).map(ServerId).collect();
 
-        self.generate_clickhouse_config(keeper_ids.clone(), replica_ids.clone())?;
+        self.generate_clickhouse_config(
+            keeper_ids.clone(),
+            replica_ids.clone(),
+        )?;
         for id in &keeper_ids {
             self.generate_keeper_config(*id, keeper_ids.clone())?;
         }
@@ -485,8 +542,8 @@ impl Deployment {
     }
     fn generate_clickhouse_config(
         &self,
-        keeper_ids: BTreeSet<u64>,
-        replica_ids: BTreeSet<u64>,
+        keeper_ids: BTreeSet<KeeperId>,
+        replica_ids: BTreeSet<ServerId>,
     ) -> Result<()> {
         let cluster = self.config.cluster_name.clone();
 
@@ -494,7 +551,7 @@ impl Deployment {
             .iter()
             .map(|&id| ServerConfig {
                 host: "::1".to_string(),
-                port: self.config.base_ports.clickhouse_tcp + id as u16,
+                port: self.config.base_ports.clickhouse_tcp + id.0 as u16,
             })
             .collect();
         let remote_servers = RemoteServers {
@@ -508,15 +565,16 @@ impl Deployment {
                 .iter()
                 .map(|&id| ServerConfig {
                     host: "[::1]".to_string(),
-                    port: self.config.base_ports.keeper + id as u16,
+                    port: self.config.base_ports.keeper + id.0 as u16,
                 })
                 .collect(),
         };
 
         for id in replica_ids {
-            let dir: Utf8PathBuf = [self.config.path.as_str(), &format!("clickhouse-{id}")]
-                .iter()
-                .collect();
+            let dir: Utf8PathBuf =
+                [self.config.path.as_str(), &format!("clickhouse-{id}")]
+                    .iter()
+                    .collect();
             let logs: Utf8PathBuf = dir.join("logs");
             std::fs::create_dir_all(&logs)?;
             let log = logs.join("clickhouse.log");
@@ -536,10 +594,13 @@ impl Deployment {
                     cluster: cluster.clone(),
                 },
                 listen_host: "::1".to_string(),
-                http_port: self.config.base_ports.clickhouse_http + id as u16,
-                tcp_port: self.config.base_ports.clickhouse_tcp + id as u16,
-                interserver_http_port: self.config.base_ports.clickhouse_interserver_http
-                    + id as u16,
+                http_port: self.config.base_ports.clickhouse_http + id.0 as u16,
+                tcp_port: self.config.base_ports.clickhouse_tcp + id.0 as u16,
+                interserver_http_port: self
+                    .config
+                    .base_ports
+                    .clickhouse_interserver_http
+                    + id.0 as u16,
                 remote_servers: remote_servers.clone(),
                 keepers: keepers.clone(),
                 data_path,
@@ -552,18 +613,23 @@ impl Deployment {
     }
 
     /// Generate a config for `this_keeper` consisting of the replicas in `keeper_ids`
-    fn generate_keeper_config(&self, this_keeper: u64, keeper_ids: BTreeSet<u64>) -> Result<()> {
+    fn generate_keeper_config(
+        &self,
+        this_keeper: KeeperId,
+        keeper_ids: BTreeSet<KeeperId>,
+    ) -> Result<()> {
         let raft_servers: Vec<_> = keeper_ids
             .iter()
             .map(|id| RaftServerConfig {
                 id: *id,
                 hostname: "::1".to_string(),
-                port: self.config.base_ports.raft + *id as u16,
+                port: self.config.base_ports.raft + id.0 as u16,
             })
             .collect();
-        let dir: Utf8PathBuf = [self.config.path.as_str(), &format!("keeper-{this_keeper}")]
-            .iter()
-            .collect();
+        let dir: Utf8PathBuf =
+            [self.config.path.as_str(), &format!("keeper-{this_keeper}")]
+                .iter()
+                .collect();
         let logs: Utf8PathBuf = dir.join("logs");
         std::fs::create_dir_all(&logs)?;
         let log = logs.join("clickhouse-keeper.log");
@@ -577,7 +643,7 @@ impl Deployment {
                 count: 1,
             },
             listen_host: "::1".to_string(),
-            tcp_port: self.config.base_ports.keeper + this_keeper as u16,
+            tcp_port: self.config.base_ports.keeper + this_keeper.0 as u16,
             server_id: this_keeper,
             log_storage_path: dir.join("coordination").join("log"),
             snapshot_storage_path: dir.join("coordination").join("snapshots"),
@@ -586,9 +652,7 @@ impl Deployment {
                 session_timeout_ms: 30000,
                 raft_logs_level: LogLevel::Trace,
             },
-            raft_config: RaftServers {
-                servers: raft_servers.clone(),
-            },
+            raft_config: RaftServers { servers: raft_servers.clone() },
         };
         let mut f = File::create(dir.join("keeper-config.xml"))?;
         f.write_all(config.to_xml().as_bytes())?;
