@@ -37,7 +37,13 @@ impl KeeperClient {
         KeeperClient { addr }
     }
 
-    pub async fn config(&self) -> Result<BTreeMap<u64, KeeperConfig>, KeeperError> {
+    pub fn addr(&self) -> &SocketAddr {
+        &self.addr
+    }
+
+    pub async fn config(
+        &self,
+    ) -> Result<BTreeMap<u64, KeeperConfig>, KeeperError> {
         let output = self.query("get /keeper/config").await?;
         let mut config = BTreeMap::new();
         for line in output.lines() {
@@ -54,12 +60,7 @@ impl KeeperClient {
             let id = id
                 .parse::<u64>()
                 .map_err(|_| KeeperError::UnexpectedResponse)?;
-            config.insert(
-                id,
-                KeeperConfig {
-                    addr: addr.to_string(),
-                },
-            );
+            config.insert(id, KeeperConfig { addr: addr.to_string() });
         }
         Ok(config)
     }
