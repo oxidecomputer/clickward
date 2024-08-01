@@ -71,6 +71,8 @@ impl KeeperClient {
     async fn query(&self, query: &str) -> Result<String, KeeperError> {
         let mut child = Command::new("clickhouse")
             .arg("keeper-client")
+            .arg("--host")
+            .arg(format!("[{}]", self.addr.ip().to_string()))
             .arg("--port")
             .arg(self.addr.port().to_string())
             .arg("--query")
