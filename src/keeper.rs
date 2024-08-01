@@ -19,6 +19,9 @@ pub enum KeeperError {
 
     #[error("unexpected response")]
     UnexpectedResponse,
+
+    #[error("query error: query = {query}, error = {error}")]
+    Query { query: String, error: String },
 }
 
 #[derive(Debug, Clone)]
@@ -74,9 +77,15 @@ impl KeeperClient {
             .arg(query)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
 
+        let mut stderr = child.stderr.take().unwrap();
+        let mut error = String::new();
+        stderr.read_to_string(&mut error).await?;
+        if !error.is_empty() {
+            return Err(KeeperError::Query { query: query.to_string(), error });
+        }
         let mut stdout = child.stdout.take().unwrap();
         let mut output = String::new();
         stdout.read_to_string(&mut output).await?;
