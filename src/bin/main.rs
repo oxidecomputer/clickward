@@ -29,6 +29,10 @@ enum Commands {
         /// Number of clickhouse replicas
         #[arg(long)]
         num_replicas: u64,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Launch our deployment given generated configs
@@ -36,6 +40,10 @@ enum Commands {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Stop all our deployed processes
@@ -43,6 +51,10 @@ enum Commands {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Show metadata about the deployment
@@ -50,6 +62,10 @@ enum Commands {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Add a keeper node to the keeper cluster
@@ -57,6 +73,10 @@ enum Commands {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Remove a keeper node
@@ -68,6 +88,10 @@ enum Commands {
         /// Id of the keeper node to remove
         #[arg(long)]
         id: u64,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Get the keeper config from a given keeper
@@ -82,6 +106,10 @@ enum Commands {
         /// Root path of all configuration
         #[arg(short, long)]
         path: Utf8PathBuf,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 
     /// Remove a clickhouse server
@@ -93,6 +121,10 @@ enum Commands {
         /// Id of the clickhouse server node to remove
         #[arg(long)]
         id: u64,
+
+        /// Target directory where all configuration files will be saved
+        #[arg(short, long)]
+        target_dir: Option<Utf8PathBuf>,
     },
 }
 
@@ -109,20 +141,28 @@ async fn main() {
 async fn handle() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::GenConfig { path, num_keepers, num_replicas } => {
-            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::GenConfig { path, num_keepers, num_replicas, target_dir } => {
+            let mut d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.generate_config(num_keepers, num_replicas)
         }
-        Commands::Deploy { path } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::Deploy { path, target_dir } => {
+            let d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.deploy()
         }
-        Commands::Teardown { path } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::Teardown { path, target_dir } => {
+            let d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.teardown()
         }
-        Commands::Show { path } => {
-            let d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::Show { path, target_dir } => {
+            let d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             match &d.meta() {
                 Some(meta) => println!("{:#?}", meta),
                 None => println!(
@@ -131,31 +171,40 @@ async fn handle() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Commands::AddKeeper { path } => {
-            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::AddKeeper { path, target_dir } => {
+            let mut d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.add_keeper()
         }
-        Commands::RemoveKeeper { path, id } => {
-            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::RemoveKeeper { path, id, target_dir } => {
+            let mut d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.remove_keeper(id.into())
         }
         Commands::KeeperConfig { id } => {
             // Unused
             let dummy_path = ".".into();
-            let d =
-                Deployment::new_with_default_port_config(dummy_path, CLUSTER);
+            let d = Deployment::new_with_default_port_config(
+                dummy_path, CLUSTER, None,
+            );
             let addr = d.keeper_addr(id.into())?;
             let zk = KeeperClient::new(addr);
             let output = zk.config().await?;
             println!("{output:#?}");
             Ok(())
         }
-        Commands::AddServer { path } => {
-            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::AddServer { path, target_dir } => {
+            let mut d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.add_server()
         }
-        Commands::RemoveServer { path, id } => {
-            let mut d = Deployment::new_with_default_port_config(path, CLUSTER);
+        Commands::RemoveServer { path, id, target_dir } => {
+            let mut d = Deployment::new_with_default_port_config(
+                path, CLUSTER, target_dir,
+            );
             d.remove_server(id.into())
         }
     }

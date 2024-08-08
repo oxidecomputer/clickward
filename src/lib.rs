@@ -82,8 +82,13 @@ impl DeploymentConfig {
     pub fn new_with_default_ports<S: Into<String>>(
         path: Utf8PathBuf,
         cluster_name: S,
+        target_dir: Option<Utf8PathBuf>,
     ) -> DeploymentConfig {
-        let path = path.join(DEPLOYMENT_DIR);
+        let dir = match target_dir {
+            Some(d) => d,
+            None => Utf8PathBuf::from(DEPLOYMENT_DIR),
+        };
+        let path = path.join(dir);
         DeploymentConfig {
             path,
             base_ports: DEFAULT_BASE_PORTS,
@@ -196,9 +201,13 @@ impl Deployment {
     pub fn new_with_default_port_config<S: Into<String>>(
         path: Utf8PathBuf,
         cluster_name: S,
+        target_dir: Option<Utf8PathBuf>,
     ) -> Deployment {
-        let config =
-            DeploymentConfig::new_with_default_ports(path, cluster_name);
+        let config = DeploymentConfig::new_with_default_ports(
+            path,
+            cluster_name,
+            target_dir,
+        );
         Deployment::new(config)
     }
 
