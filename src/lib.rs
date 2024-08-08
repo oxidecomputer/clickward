@@ -588,8 +588,9 @@ impl Deployment {
                 [self.config.path.as_str(), &format!("clickhouse-{id}")]
                     .iter()
                     .collect();
+            std::fs::create_dir_all(&dir)?;
+
             let logs: Utf8PathBuf = dir.join("logs");
-            std::fs::create_dir_all(&logs)?;
             let log = logs.join("clickhouse.log");
             let errorlog = logs.join("clickhouse.err.log");
             let data_path = dir.join("data");
@@ -643,8 +644,9 @@ impl Deployment {
             [self.config.path.as_str(), &format!("keeper-{this_keeper}")]
                 .iter()
                 .collect();
+        std::fs::create_dir_all(&dir)?;
+
         let logs: Utf8PathBuf = dir.join("logs");
-        std::fs::create_dir_all(&logs)?;
         let log = logs.join("clickhouse-keeper.log");
         let errorlog = logs.join("clickhouse-keeper.err.log");
         let config = KeeperConfig {
