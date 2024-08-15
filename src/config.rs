@@ -4,9 +4,11 @@
 
 use crate::{KeeperId, ServerId};
 use camino::Utf8PathBuf;
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 /// Config for an individual Clickhouse Replica
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplicaConfig {
     pub logger: LogConfig,
     pub macros: Macros,
@@ -109,6 +111,7 @@ impl ReplicaConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Macros {
     pub shard: u64,
     pub replica: ServerId,
@@ -129,7 +132,7 @@ impl Macros {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteServers {
     pub cluster: String,
     pub secret: String,
@@ -172,7 +175,7 @@ impl RemoteServers {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeeperConfigsForReplica {
     pub nodes: Vec<ServerConfig>,
 }
@@ -195,12 +198,13 @@ impl KeeperConfigsForReplica {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogConfig {
     pub level: LogLevel,
     pub log: Utf8PathBuf,
@@ -227,12 +231,14 @@ impl LogConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeeperCoordinationSettings {
     pub operation_timeout_ms: u32,
     pub session_timeout_ms: u32,
     pub raft_logs_level: LogLevel,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RaftServers {
     pub servers: Vec<RaftServerConfig>,
 }
@@ -257,7 +263,7 @@ impl RaftServers {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RaftServerConfig {
     pub id: KeeperId,
     pub hostname: String,
@@ -265,6 +271,7 @@ pub struct RaftServerConfig {
 }
 
 /// Config for an individual Clickhouse Keeper
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeeperConfig {
     pub logger: LogConfig,
     pub listen_host: String,
@@ -323,6 +330,7 @@ impl KeeperConfig {
 }
 
 #[allow(unused)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogLevel {
     Trace,
     Debug,
