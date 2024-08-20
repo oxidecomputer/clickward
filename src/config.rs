@@ -4,11 +4,24 @@
 
 use crate::{KeeperId, ServerId};
 use camino::Utf8PathBuf;
+use schemars::{
+    gen::SchemaGenerator,
+    schema::{Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
+// Used for schemars to be able to be used with camino:
+// See https://github.com/camino-rs/camino/issues/91#issuecomment-2027908513
+fn path_schema(gen: &mut SchemaGenerator) -> Schema {
+    let mut schema: SchemaObject = <String>::json_schema(gen).into();
+    schema.format = Some("Utf8PathBuf".to_owned());
+    schema.into()
+}
+
 /// Config for an individual Clickhouse Replica
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct ReplicaConfig {
     pub logger: LogConfig,
     pub macros: Macros,
@@ -18,6 +31,7 @@ pub struct ReplicaConfig {
     pub interserver_http_port: u16,
     pub remote_servers: RemoteServers,
     pub keepers: KeeperConfigsForReplica,
+    #[schemars(schema_with = "path_schema")]
     pub data_path: Utf8PathBuf,
 }
 
@@ -111,7 +125,7 @@ impl ReplicaConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct Macros {
     pub shard: u64,
     pub replica: ServerId,
@@ -132,7 +146,7 @@ impl Macros {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct RemoteServers {
     pub cluster: String,
     pub secret: String,
@@ -175,7 +189,7 @@ impl RemoteServers {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct KeeperConfigsForReplica {
     pub nodes: Vec<ServerConfig>,
 }
@@ -198,16 +212,18 @@ impl KeeperConfigsForReplica {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct LogConfig {
     pub level: LogLevel,
+    #[schemars(schema_with = "path_schema")]
     pub log: Utf8PathBuf,
+    #[schemars(schema_with = "path_schema")]
     pub errorlog: Utf8PathBuf,
     // TODO: stronger type?
     pub size: String,
@@ -231,14 +247,14 @@ impl LogConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct KeeperCoordinationSettings {
     pub operation_timeout_ms: u32,
     pub session_timeout_ms: u32,
     pub raft_logs_level: LogLevel,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct RaftServers {
     pub servers: Vec<RaftServerConfig>,
 }
@@ -263,7 +279,7 @@ impl RaftServers {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct RaftServerConfig {
     pub id: KeeperId,
     pub hostname: String,
@@ -271,13 +287,15 @@ pub struct RaftServerConfig {
 }
 
 /// Config for an individual Clickhouse Keeper
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub struct KeeperConfig {
     pub logger: LogConfig,
     pub listen_host: String,
     pub tcp_port: u16,
     pub server_id: KeeperId,
+    #[schemars(schema_with = "path_schema")]
     pub log_storage_path: Utf8PathBuf,
+    #[schemars(schema_with = "path_schema")]
     pub snapshot_storage_path: Utf8PathBuf,
     pub coordination_settings: KeeperCoordinationSettings,
     pub raft_config: RaftServers,
@@ -330,7 +348,7 @@ impl KeeperConfig {
 }
 
 #[allow(unused)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, JsonSchema, Serialize, Deserialize)]
 pub enum LogLevel {
     Trace,
     Debug,

@@ -5,6 +5,7 @@
 use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use derive_more::{Add, AddAssign, Display, From};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -40,6 +41,7 @@ const MISSING_META: &str = "No deployment found: Is your path correct?";
     Add,
     AddAssign,
     Display,
+    JsonSchema,
     Serialize,
     Deserialize,
 )]
@@ -58,6 +60,7 @@ pub struct KeeperId(pub u64);
     Add,
     AddAssign,
     Display,
+    JsonSchema,
     Serialize,
     Deserialize,
 )]
