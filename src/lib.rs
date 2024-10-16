@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Write;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::process::{Command, Stdio};
 
 pub mod config;
@@ -219,13 +219,21 @@ impl Deployment {
         self.config.base_ports.clickhouse_http + id.0 as u16
     }
 
+    /// Return the expected ClickHouse native TCP port for a given server ID.
+    pub fn native_port(&self, id: ServerId) -> u16 {
+        self.config.base_ports.clickhouse_tcp + id.0 as u16
+    }
+
     /// Return the expected localhost http addr for a given server id
-    pub fn http_addr(&self, id: ServerId) -> Result<SocketAddr> {
+    pub fn http_addr(&self, id: ServerId) -> SocketAddr {
         let port = self.http_port(id);
-        let addr: SocketAddr = format!("[::1]:{port}")
-            .parse()
-            .context("failed to create address")?;
-        Ok(addr)
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port)
+    }
+
+    /// Return the expected localhost native TCP addr for a given server ID.
+    pub fn native_addr(&self, id: ServerId) -> SocketAddr {
+        let port = self.native_port(id);
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port)
     }
 
     pub fn keeper_port(&self, id: KeeperId) -> u16 {
