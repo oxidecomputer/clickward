@@ -65,6 +65,7 @@ impl ReplicaConfig {
 
     <profiles>
         <default>
+            <opentelemetry_start_trace_probability>1</opentelemetry_start_trace_probability>
             <load_balancing>random</load_balancing>
         </default>
 
@@ -118,6 +119,23 @@ impl ReplicaConfig {
 {macros}
 {remote_servers}
 {keepers}
+
+    <!-- 
+        In newer versions of ClickHouse this table is created automatically.
+        We should remove this block once we update to a newer version of 
+        ClickHouse that does not need the system.opentelemetry_span_log
+        table to be created via the config.xml file
+    -->
+    <opentelemetry_span_log>
+        <engine>
+            engine MergeTree
+            partition by toYYYYMM(finish_date)
+            order by (finish_date, finish_time_us, trace_id)
+        </engine>
+        <database>system</database>
+        <table>opentelemetry_span_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </opentelemetry_span_log>
 
 </clickhouse>
 "
