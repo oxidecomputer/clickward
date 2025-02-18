@@ -75,6 +75,7 @@ pub const DEFAULT_BASE_PORTS: BasePorts = BasePorts {
 };
 
 // A configuration for a given clickward deployment
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeploymentConfig {
     pub path: Utf8PathBuf,
     pub base_ports: BasePorts,
@@ -96,6 +97,7 @@ impl DeploymentConfig {
 }
 
 // Port allocation used for config generation
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BasePorts {
     pub keeper: u16,
     pub raft: u16,
@@ -108,7 +110,7 @@ pub struct BasePorts {
 ///
 /// This prevents the need to parse XML and only includes what we need to
 /// implement commands.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClickwardMetadata {
     /// IDs of keepers that are currently part of the cluster
     /// We never reuse IDs.
@@ -190,6 +192,7 @@ impl ClickwardMetadata {
 /// A deployment of Clickhouse servers and Keeper clusters
 ///
 /// This always generates clusters on localhost and is suitable only for testing
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Deployment {
     config: DeploymentConfig,
     meta: Option<ClickwardMetadata>,
